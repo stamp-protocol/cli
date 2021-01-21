@@ -1,10 +1,17 @@
-use crate::util;
+use crate::{
+    db,
+    util
+};
 use stamp_core::{
-    identity::{Identity, ClaimSpec, PublishedIdentity},
+    identity::{Identity, VersionedIdentity, ClaimSpec, PublishedIdentity},
     key::{SecretKey, SignKeypair},
     private::MaybePrivate,
-    util::{Timestamp, Lockable, ser},
+    util::{Timestamp, Lockable},
 };
+
+fn passphrase_note() {
+    util::print_wrapped("To protect you identity's keychain, enter a long but memorable passphrase. Choose something personal that is easy for you to remember but hard for someone else to guess.\n\n  Example: my dog butch has a friend named snow\n\nYou can change this later using the `stamp keychain passwd` command.");
+}
 
 fn prompt_claim_name_email(master_key: &SecretKey, id: Identity) -> Result<Identity, String> {
     println!("It's a good idea to associate your name and email with your identity.");
@@ -26,17 +33,19 @@ fn prompt_claim_name_email(master_key: &SecretKey, id: Identity) -> Result<Ident
     Ok(id)
 }
 
-fn dump_id(master_key: &SecretKey, id: Identity) -> Result<(), String> {
-    let published = PublishedIdentity::publish(master_key, id)
-        .map_err(|e| format!("Problem creating published identity: {:?}", e))?;
-    let yaml = published.serialize()
-        .map_err(|e| format!("Problem serializing identity: {:?}", e))?;
-    println!("{}", yaml);
-    Ok(())
+pub fn try_load_single_identity(id: &str) -> Result<VersionedIdentity, String> {
+    let identities = db::load_identities_by_prefix(id)?;
+    if identities.len() > 1 {
+        util::print_identities_table(&identities, false);
+        Err(format!("Multiple identities matched that ID"))?;
+    } else if identities.len() == 0 {
+        Err(format!("No identities matches that ID"))?;
+    }
+    Ok(identities[0].clone())
 }
 
 pub(crate) fn create_new() -> Result<(), String> {
-    util::passphrase_note();
+    passphrase_note();
     let (identity, mut master_key) = util::with_new_passphrase("Your passphrase", |master_key, now| {
         let identity = Identity::new(master_key, now)
             .map_err(|err| format!("Failed to create identity: {:?}", err))?;
@@ -47,9 +56,9 @@ pub(crate) fn create_new() -> Result<(), String> {
     println!("Generated a new identity with the ID {}", id_str);
     println!("");
     let identity = prompt_claim_name_email(&master_key, identity)?;
-    dump_id(&master_key, identity.clone())?;
     master_key.mem_unlock().map_err(|_| format!("Unable to unlock master key memory."))?;
-    // TODO: save in db
+    let location = db::save_identity(identity)?;
+    println!("---\nSuccess! New identity saved to:\n  {}", location.to_string_lossy());
     Ok(())
 }
 
@@ -95,23 +104,61 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
             .map_err(|e| format!("Error generating alpha keypair: {:?}", e))?;
         id = Identity::create_id(&tmp_master_key, &alpha_keypair, &now)
             .map_err(|e| format!("Error generating ID: {:?}", e))?;
-        let based = ser::base64_encode(id.as_ref());
+        let based = id.to_string();
         if filter(&based) {
             break;
         }
     }
 
-    util::passphrase_note();
+    passphrase_note();
     let (_, mut master_key) = util::with_new_passphrase("Your passphrase", |_master_key, _now| { Ok(()) }, Some(now.clone()))?;
-    let alpha_keypair = alpha_keypair.rekey(&tmp_master_key, &master_key)
+    let alpha_keypair = alpha_keypair.reencrypt(&tmp_master_key, &master_key)
         .map_err(|e| format!("Error re-keying alpha keypair: {:?}", e))?;
     let identity = Identity::new_with_alpha_and_id(&master_key, now, alpha_keypair, id)
         .map_err(|err| format!("Failed to create identity: {:?}", err))?;
     let identity = prompt_claim_name_email(&master_key, identity)?;
-    dump_id(&master_key, identity.clone())?;
     master_key.mem_unlock().map_err(|_| format!("Unable to unlock master key memory."))?;
-    // TODO: save in db
-    drop(identity);
+    let location = db::save_identity(identity)?;
+    println!("---\nSuccess! New identity saved to:\n  {}", location.to_string_lossy());
+    Ok(())
+}
+
+pub fn import(location: &str) -> Result<(), String> {
+    drop(location);
+    println!("IMPLEMENT ME!");
+    Ok(())
+}
+
+pub fn export(id: &str) -> Result<(), String> {
+    let identity = try_load_single_identity(id)?;
+    let master_key = util::passphrase_prompt("Passphrase for publish keypair", identity.created())?;
+    let published = PublishedIdentity::publish(&master_key, identity)
+        .map_err(|e| format!("Error creating published identity: {:?}", e))?;
+    let serialized = published.serialize()
+        .map_err(|e| format!("Error serializing identity: {:?}", e))?;
+    println!("{}", serialized);
+    Ok(())
+}
+
+pub fn delete(search: &str, skip_confirm: bool, permanent: bool, verbose: bool) -> Result<(), String> {
+    let identities = db::list_local_identities(Some(search))?;
+    if identities.len() == 0 {
+        Err(format!("No identities match that search"))?;
+    }
+    util::print_identities_table(&identities, verbose);
+    if !skip_confirm {
+        let msg = if permanent {
+            format!("Permanently delete these {} identities? [y/N]", identities.len())
+        } else {
+            format!("Move these {} identities to the trash? [y/N]", identities.len())
+        };
+        if !util::yesno_prompt(&msg, "n")? {
+            return Ok(());
+        }
+    }
+    for identity in identities {
+        db::delete_identity(identity.id_string(), permanent)?;
+    }
     Ok(())
 }
 
