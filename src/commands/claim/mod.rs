@@ -1,6 +1,6 @@
 use crate::{
+    commands::id,
     db,
-    id,
     util,
 };
 use stamp_core::{
@@ -27,7 +27,7 @@ fn prompt_claim_value(prompt: &str) -> Result<String, String> {
 
 fn claim_pre(id: &str, prompt: &str) -> Result<(SecretKey, VersionedIdentity, String), String> {
     let identity = id::try_load_single_identity(id)?;
-    let master_key = util::passphrase_prompt("Your passphrase", identity.created())?;
+    let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", util::id_short(id)), identity.created())?;
     let value = prompt_claim_value(prompt)?;
     identity.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
@@ -112,9 +112,17 @@ pub fn new_relation(id: &str, ty: &str, private: bool) -> Result<(), String> {
     Ok(())
 }
 
-pub fn list(id: &str, verbose: bool) -> Result<(), String> {
+pub fn list(id: &str, private: bool, verbose: bool) -> Result<(), String> {
     let identity = id::try_load_single_identity(id)?;
-    util::print_claims_table(identity.claims(), verbose);
+    let master_key_maybe = if private {
+        let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", util::id_short(id)), identity.created())?;
+        identity.test_master_key(&master_key)
+            .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+        Some(master_key)
+    } else {
+        None
+    };
+    util::print_claims_table(identity.claims(), master_key_maybe, verbose);
     Ok(())
 }
 

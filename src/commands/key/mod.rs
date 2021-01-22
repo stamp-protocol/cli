@@ -1,15 +1,15 @@
 use crate::{
+    commands::id,
     db,
-    id,
     util,
 };
 
 pub fn passwd(id: &str) -> Result<(), String> {
     let identity = id::try_load_single_identity(id)?;
-    let master_key = util::passphrase_prompt("Your current passphrase", identity.created())?;
+    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", util::id_short(id)), identity.created())?;
     identity.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
-    let (_, new_master_key) = util::with_new_passphrase("Your new passphrase", |_master_key, _now| { Ok(()) }, Some(identity.created().clone()))?;
+    let (_, new_master_key) = util::with_new_passphrase("Your new master passphrase", |_master_key, _now| { Ok(()) }, Some(identity.created().clone()))?;
     let identity_reencrypted = identity.reencrypt(&master_key, &new_master_key)
         .map_err(|e| format!("Password change failed: {:?}", e))?;
     // make sure it actually works before we save it...

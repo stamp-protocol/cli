@@ -1,4 +1,5 @@
 use crate::{
+    config,
     db,
     util
 };
@@ -11,7 +12,7 @@ use stamp_core::{
 use std::convert::TryFrom;
 
 fn passphrase_note() {
-    util::print_wrapped("To protect you identity's keychain, enter a long but memorable passphrase. Choose something personal that is easy for you to remember but hard for someone else to guess.\n\n  Example: my dog butch has a friend named snow\n\nYou can change this later using the `stamp keychain passwd` command.");
+    util::print_wrapped("To protect your identity from unauthorized changes, enter a long but memorable master passphrase. Choose something personal that is easy for you to remember but hard for someone else to guess.\n\n  Example: my dog butch has a friend named snow\n\nYou can change this later using the `stamp keychain passwd` command.");
 }
 
 fn prompt_claim_name_email(master_key: &SecretKey, id: Identity) -> Result<Identity, String> {
@@ -47,7 +48,7 @@ pub fn try_load_single_identity(id: &str) -> Result<VersionedIdentity, String> {
 
 pub(crate) fn create_new() -> Result<(), String> {
     passphrase_note();
-    let (identity, mut master_key) = util::with_new_passphrase("Your passphrase", |master_key, now| {
+    let (identity, mut master_key) = util::with_new_passphrase("Your master passphrase", |master_key, now| {
         let identity = Identity::new(master_key, now)
             .map_err(|err| format!("Failed to create identity: {:?}", err))?;
         Ok(identity)
@@ -61,6 +62,12 @@ pub(crate) fn create_new() -> Result<(), String> {
     master_key.mem_unlock().map_err(|_| format!("Unable to unlock master key memory."))?;
     let location = db::save_identity(identity)?;
     println!("---\nSuccess! New identity saved to:\n  {}", location.to_string_lossy());
+    let mut conf = config::load()?;
+    if conf.default_identity.is_none() {
+        println!("Marking identity as default.");
+        conf.default_identity = Some(id_str);
+        config::save(&conf)?;
+    }
     Ok(())
 }
 
@@ -114,7 +121,7 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
     }
 
     passphrase_note();
-    let (_, mut master_key) = util::with_new_passphrase("Your passphrase", |_master_key, _now| { Ok(()) }, Some(now.clone()))?;
+    let (_, mut master_key) = util::with_new_passphrase("Your master passphrase", |_master_key, _now| { Ok(()) }, Some(now.clone()))?;
     let alpha_keypair = alpha_keypair.reencrypt(&tmp_master_key, &master_key)
         .map_err(|e| format!("Error re-keying alpha keypair: {:?}", e))?;
     let identity = Identity::new_with_alpha_and_id(&master_key, now, alpha_keypair, id)
@@ -140,8 +147,9 @@ pub fn import(location: &str) -> Result<(), String> {
 
 pub fn export(id: &str) -> Result<(), String> {
     let identity = try_load_single_identity(id)?;
-    let master_key = util::passphrase_prompt("Passphrase for publish keypair", identity.created())?;
-    let published = PublishedIdentity::publish(&master_key, identity)
+    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", util::id_short(id)), identity.created())?;
+    let now = Timestamp::now();
+    let published = PublishedIdentity::publish(&master_key, now, identity)
         .map_err(|e| format!("Error creating published identity: {:?}", e))?;
     let serialized = published.serialize()
         .map_err(|e| format!("Error serializing identity: {:?}", e))?;

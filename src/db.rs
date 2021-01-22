@@ -1,4 +1,6 @@
-use dirs;
+use crate::{
+    util,
+};
 use stamp_core::{
     identity::VersionedIdentity,
 };
@@ -13,11 +15,7 @@ use std::{
 };
 
 fn data_dir() -> Result<PathBuf, String> {
-    let mut dir = dirs::data_dir()
-        .or_else(|| dirs::home_dir().map(|mut x| { x.push(".stamp"); x }))
-        .ok_or(String::from("Cannot find user's home or data directory."))?;
-    dir.push("stamp");
-    Ok(dir)
+    util::data_dir()
 }
 
 fn data_dir_id() -> Result<PathBuf, String> {
