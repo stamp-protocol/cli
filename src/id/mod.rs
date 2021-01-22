@@ -8,6 +8,7 @@ use stamp_core::{
     private::MaybePrivate,
     util::{Timestamp, Lockable},
 };
+use std::convert::TryFrom;
 
 fn passphrase_note() {
     util::print_wrapped("To protect you identity's keychain, enter a long but memorable passphrase. Choose something personal that is easy for you to remember but hard for someone else to guess.\n\n  Example: my dog butch has a friend named snow\n\nYou can change this later using the `stamp keychain passwd` command.");
@@ -21,14 +22,14 @@ fn prompt_claim_name_email(master_key: &SecretKey, id: Identity) -> Result<Ident
     let name: String = dialoguer::Input::new()
         .with_prompt("Your full name")
         .interact_text()
-        .map_err(|e| format!("Error grabbing retry input: {:?}", e))?;
+        .map_err(|e| format!("Error grabbing name input: {:?}", e))?;
     let email: String = dialoguer::Input::new()
         .with_prompt("Your primary email")
         .interact_text()
-        .map_err(|e| format!("Error grabbing retry input: {:?}", e))?;
-    let id = id.make_claim(master_key, Timestamp::now(), ClaimSpec::Name(MaybePrivate::Public(name)))
+        .map_err(|e| format!("Error grabbing email input: {:?}", e))?;
+    let id = id.make_claim(master_key, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public(name)))
         .map_err(|e| format!("Error generating name claim: {:?}", e))?;
-    let id = id.make_claim(master_key, Timestamp::now(), ClaimSpec::Email(MaybePrivate::Public(email)))
+    let id = id.make_claim(master_key, Timestamp::now(), ClaimSpec::Email(MaybePrivate::new_public(email)))
         .map_err(|e| format!("Error generating email claim: {:?}", e))?;
     Ok(id)
 }
@@ -52,7 +53,8 @@ pub(crate) fn create_new() -> Result<(), String> {
         Ok(identity)
     }, None)?;
     println!("");
-    let id_str: String = identity.id().into();
+    let id_str = String::try_from(identity.id())
+        .map_err(|e| format!("There was a problem converting the id {:?} to a string: {:?}", identity.id(), e))?;
     println!("Generated a new identity with the ID {}", id_str);
     println!("");
     let identity = prompt_claim_name_email(&master_key, identity)?;
@@ -104,7 +106,8 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
             .map_err(|e| format!("Error generating alpha keypair: {:?}", e))?;
         id = Identity::create_id(&tmp_master_key, &alpha_keypair, &now)
             .map_err(|e| format!("Error generating ID: {:?}", e))?;
-        let based = id.to_string();
+        let based = String::try_from(&id)
+            .map_err(|e| format!("There was a problem converting the id {:?} to a string: {:?}", id, e))?;
         if filter(&based) {
             break;
         }
@@ -120,6 +123,12 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
     master_key.mem_unlock().map_err(|_| format!("Unable to unlock master key memory."))?;
     let location = db::save_identity(identity)?;
     println!("---\nSuccess! New identity saved to:\n  {}", location.to_string_lossy());
+    Ok(())
+}
+
+pub fn list(search: Option<&str>, verbose: bool) -> Result<(), String> {
+    let identities = db::list_local_identities(search)?;
+    util::print_identities_table(&identities, verbose);
     Ok(())
 }
 
@@ -157,7 +166,9 @@ pub fn delete(search: &str, skip_confirm: bool, permanent: bool, verbose: bool) 
         }
     }
     for identity in identities {
-        db::delete_identity(identity.id_string(), permanent)?;
+        let id = String::try_from(identity.id())
+            .map_err(|e| format!("There was a problem converting the id {:?} to a string: {:?}", identity.id(), e))?;
+        db::delete_identity(&id, permanent)?;
     }
     Ok(())
 }

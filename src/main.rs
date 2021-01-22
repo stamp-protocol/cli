@@ -1,5 +1,6 @@
 #[macro_use] extern crate prettytable;
 
+mod claim;
 mod db;
 mod debug;
 mod id;
@@ -15,18 +16,18 @@ fn run() -> Result<(), String> {
         .max_term_width(util::term_maxwidth())
         .about("A command line interface to the Stamp identity protocol.")
         .setting(AppSettings::SubcommandRequiredElseHelp)
-        .setting(AppSettings::InferSubcommands)
-        .setting(AppSettings::VersionlessSubcommands)
-        .setting(AppSettings::InferSubcommands)
+        .global_setting(AppSettings::VersionlessSubcommands)
+        .global_setting(AppSettings::InferSubcommands)
+        //.global_setting(AppSettings::NoBinaryName)
+        //.global_setting(AppSettings::DisableVersion)
         .subcommand(
             SubCommand::with_name("id")
                 .about("The `id` command helps with managing identities, such as creating new ones or importing identities from other people.")
-                .setting(AppSettings::SubcommandRequiredElseHelp)
-                .setting(AppSettings::NoBinaryName)
-                .setting(AppSettings::InferSubcommands)
                 .setting(AppSettings::DisableVersion)
+                .setting(AppSettings::SubcommandRequiredElseHelp)
                 .subcommand(
                     SubCommand::with_name("new")
+                        .setting(AppSettings::DisableVersion)
                         .about("Creates a new identity.")
                 )
                 .subcommand(
@@ -82,6 +83,10 @@ fn run() -> Result<(), String> {
                     SubCommand::with_name("delete")
                         .setting(AppSettings::DisableVersion)
                         .about("Remove a locally-stored identity.")
+                        .arg(Arg::with_name("SEARCH")
+                                .required(true)
+                                .index(1)
+                                .help("An identity ID, name, or email to search for when deleting."))
                         .arg(Arg::with_name("yes")
                                 .short("y")
                                 .help("Do not confirm deletion, just delete. Use with caution."))
@@ -91,19 +96,110 @@ fn run() -> Result<(), String> {
                         .arg(Arg::with_name("verbose")
                                 .short("v")
                                 .help("Use verbose output with long-form IDs when printing deletion table."))
-                        .arg(Arg::with_name("SEARCH")
+                )
+        )
+        .subcommand(
+            SubCommand::with_name("claim")
+                .about("Manages claims for identities you own. Claims are pieces of identifying information attached to your identity that others can verify and \"stamp.\"")
+                .setting(AppSettings::DisableVersion)
+                .setting(AppSettings::SubcommandRequiredElseHelp)
+                .subcommand(
+                    SubCommand::with_name("new")
+                        .about("Create a new claim that contains information anybody can view. This is good for things like your name or email.")
+                        .setting(AppSettings::DisableVersion)
+                        .setting(AppSettings::SubcommandRequiredElseHelp)
+                        .subcommand(
+                            SubCommand::with_name("identity")
+                                .about("Create an identity ownership claim. This is always created automatically for any new identity you create, but can also be created for another identity (for instance if you move to a new identity).")
+                                .setting(AppSettings::DisableVersion)
+                                .arg(Arg::with_name("ID")
+                                        .required(true)
+                                        .index(1)
+                                        .help("The ID of the identity we want to add a claim to."))
+                        )
+                        .subcommand(
+                            SubCommand::with_name("name")
+                                .about("Claim your full name. Generally you only have one name claim, but you are free to add more if you wish.")
+                                .setting(AppSettings::DisableVersion)
+                                .arg(Arg::with_name("ID")
+                                        .required(true)
+                                        .index(1)
+                                        .help("The ID of the identity we want to add a claim to."))
+                                .arg(Arg::with_name("private")
+                                        .short("p")
+                                        .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
+                        )
+                        .subcommand(
+                            SubCommand::with_name("email")
+                                .about("Claim ownership of an email address.")
+                                .setting(AppSettings::DisableVersion)
+                                .arg(Arg::with_name("ID")
+                                        .required(true)
+                                        .index(1)
+                                        .help("The ID of the identity we want to add a claim to."))
+                                .arg(Arg::with_name("private")
+                                        .short("p")
+                                        .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
+                        )
+                        .subcommand(
+                            SubCommand::with_name("pgp")
+                                .about("Claim ownership of a PGP identity. It's probably best to use the long-form ID for this.")
+                                .setting(AppSettings::DisableVersion)
+                                .arg(Arg::with_name("ID")
+                                        .required(true)
+                                        .index(1)
+                                        .help("The ID of the identity we want to add a claim to."))
+                                .arg(Arg::with_name("private")
+                                        .short("p")
+                                        .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
+                        )
+                        .subcommand(
+                            SubCommand::with_name("address")
+                                .about("Claim a home address. (Hint: you might want the -p flag with this unless you like meeting internet strangers)")
+                                .setting(AppSettings::DisableVersion)
+                                .arg(Arg::with_name("ID")
+                                        .required(true)
+                                        .index(1)
+                                        .help("The ID of the identity we want to add a claim to."))
+                                .arg(Arg::with_name("private")
+                                        .short("p")
+                                        .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
+                        )
+                        .subcommand(
+                            SubCommand::with_name("relation")
+                                .about("Claim that you are in a relationship with another identity.")
+                                .arg(Arg::with_name("ID")
+                                        .required(true)
+                                        .index(1)
+                                        .help("The ID of the identity we want to add a claim to."))
+                                .arg(Arg::with_name("TYPE")
+                                        .required(true)
+                                        .index(2)
+                                        .possible_values(&["family", "friend", "org"])
+                                        .help("The relationship type."))
+                                .arg(Arg::with_name("private")
+                                        .short("p")
+                                        .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
+                        )
+                )
+                .subcommand(
+                    SubCommand::with_name("list")
+                        .about("List the claims on an identity.")
+                        .setting(AppSettings::DisableVersion)
+                        .arg(Arg::with_name("ID")
                                 .required(true)
                                 .index(1)
-                                .help("An identity ID, name, or email to search for when deleting."))
+                                .help("The ID of the identity we are listing the claims for."))
+                        .arg(Arg::with_name("verbose")
+                                .short("v")
+                                .help("Verbose output, with long-form IDs."))
                 )
         )
         .subcommand(
             SubCommand::with_name("keychain")
                 .about("Allows managing the keys in an identity's keychain. This includes changing the passphrase for the identity, and generating or revoking subkeys.\n\nThis command only applies to identities owned by you.")
-                .setting(AppSettings::SubcommandRequiredElseHelp)
-                .setting(AppSettings::NoBinaryName)
-                .setting(AppSettings::InferSubcommands)
                 .setting(AppSettings::DisableVersion)
+                .setting(AppSettings::SubcommandRequiredElseHelp)
                 .subcommand(
                     SubCommand::with_name("passwd")
                         .setting(AppSettings::DisableVersion)
@@ -118,10 +214,8 @@ fn run() -> Result<(), String> {
         .subcommand(
             SubCommand::with_name("debug")
                 .about("Tools for Stamp development. Best to steer clear of here or I fear, my dear, trouble may appear. ")
-                .setting(AppSettings::SubcommandRequiredElseHelp)
-                .setting(AppSettings::NoBinaryName)
-                .setting(AppSettings::InferSubcommands)
                 .setting(AppSettings::DisableVersion)
+                .setting(AppSettings::SubcommandRequiredElseHelp)
                 .subcommand(
                     SubCommand::with_name("root-sig")
                         .setting(AppSettings::DisableVersion)
@@ -157,8 +251,7 @@ fn run() -> Result<(), String> {
                 ("list", Some(args)) => {
                     let search = args.value_of("SEARCH");
                     let verbose = args.is_present("verbose");
-                    let identities = db::list_local_identities(search)?;
-                    util::print_identities_table(&identities, verbose);
+                    id::list(search, verbose)?;
                 }
                 ("import", Some(args)) => {
                     let location = args.value_of("LOCATION")
@@ -166,8 +259,7 @@ fn run() -> Result<(), String> {
                     id::import(location)?;
                 }
                 ("export", Some(args)) => {
-                    let id = args.value_of("ID")
-                        .ok_or(format!("Must specify an ID"))?;
+                    let id = args.value_of("ID").ok_or(format!("Must specify an ID"))?;
                     id::export(id)?;
                 }
                 ("delete", Some(args)) => {
@@ -181,11 +273,55 @@ fn run() -> Result<(), String> {
                 _ => println!("{}", args.usage()),
             }
         }
+        ("claim", Some(args)) => {
+            match args.subcommand() {
+                ("new", Some(args)) => {
+                    match args.subcommand() {
+                        ("identity", Some(args)) => {
+                            let id = args.value_of("ID").ok_or(format!("Must specify an ID"))?;
+                            claim::new_id(id)?;
+                        }
+                        ("name", Some(args)) => {
+                            let id = args.value_of("ID").ok_or(format!("Must specify an ID"))?;
+                            let private = args.is_present("private");
+                            claim::new_name(id, private)?;
+                        }
+                        ("email", Some(args)) => {
+                            let id = args.value_of("ID").ok_or(format!("Must specify an ID"))?;
+                            let private = args.is_present("private");
+                            claim::new_email(id, private)?;
+                        }
+                        ("pgp", Some(args)) => {
+                            let id = args.value_of("ID").ok_or(format!("Must specify an ID"))?;
+                            let private = args.is_present("private");
+                            claim::new_pgp(id, private)?;
+                        }
+                        ("address", Some(args)) => {
+                            let id = args.value_of("ID").ok_or(format!("Must specify an ID"))?;
+                            let private = args.is_present("private");
+                            claim::new_address(id, private)?;
+                        }
+                        ("relation", Some(args)) => {
+                            let id = args.value_of("ID").ok_or(format!("Must specify an ID"))?;
+                            let ty = args.value_of("TYPE").ok_or(format!("Must specify a relationship type"))?;
+                            let private = args.is_present("private");
+                            claim::new_relation(id, ty, private)?;
+                        }
+                        _ => println!("{}", args.usage()),
+                    }
+                }
+                ("list", Some(args)) => {
+                    let id = args.value_of("ID").ok_or(format!("Must specify an ID"))?;
+                    let verbose = args.is_present("verbose");
+                    claim::list(id, verbose)?;
+                }
+                _ => println!("{}", args.usage()),
+            }
+        }
         ("keychain", Some(args)) => {
             match args.subcommand() {
                 ("passwd", Some(args)) => {
-                    let id = args.value_of("ID")
-                        .ok_or(format!("Must specify an ID"))?;
+                    let id = args.value_of("ID").ok_or(format!("Must specify an ID"))?;
                     key::passwd(id)?;
                 }
                 _ => println!("{}", args.usage()),
@@ -194,8 +330,7 @@ fn run() -> Result<(), String> {
         ("debug", Some(args)) => {
             match args.subcommand() {
                 ("root-sig", Some(args)) => {
-                    let id = args.value_of("ID")
-                        .ok_or(format!("Must specify an ID"))?;
+                    let id = args.value_of("ID").ok_or(format!("Must specify an ID"))?;
                     debug::root_sig(id)?;
                 }
                 _ => println!("{}", args.usage()),

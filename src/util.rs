@@ -1,9 +1,13 @@
 use prettytable::Table;
 use stamp_core::{
     key::SecretKey,
-    identity::VersionedIdentity,
+    identity::{
+        ClaimContainer,
+        VersionedIdentity,
+    },
     util::Lockable,
 };
+use std::convert::TryFrom;
 use textwrap;
 
 pub(crate) fn term_maxwidth() -> usize { 120 }
@@ -73,7 +77,8 @@ pub fn print_identities_table(identities: &Vec<VersionedIdentity>, verbose: bool
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
     table.set_titles(row!["Mine", "ID", "Nickname", "Name", "Email", "Created"]);
     for identity in identities {
-        let id_full = identity.id_string();
+        let id_full = String::try_from(identity.id())
+            .unwrap_or(String::from("<error serializing ID>"));
         let id_short = &id_full[0..16];
         let nickname = identity.nickname_maybe().unwrap_or(String::from(""));
         let name = identity.name_maybe().unwrap_or(String::from(""));
@@ -88,6 +93,15 @@ pub fn print_identities_table(identities: &Vec<VersionedIdentity>, verbose: bool
             email,
             created,
         ]);
+    }
+    table.printstd();
+}
+
+pub fn print_claims_table(claims: &Vec<ClaimContainer>, verbose: bool) {
+    let mut table = Table::new();
+    table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    table.set_titles(row!["ID", "Type", "Value", "Created", "# stamps"]);
+    for claim in claims {
     }
     table.printstd();
 }

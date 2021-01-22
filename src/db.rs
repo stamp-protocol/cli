@@ -3,6 +3,7 @@ use stamp_core::{
     identity::VersionedIdentity,
 };
 use std::{
+    convert::TryFrom,
     fs::{self, File},
     io::{
         prelude::*,
@@ -30,7 +31,8 @@ pub(crate) fn save_identity<T: Into<VersionedIdentity>>(identity: T) -> Result<P
     fs::create_dir_all(&data_dir)
         .map_err(|e| format!("Cannot create data directory: {:?}", e))?;
     let versioned = identity.into();
-    let id = versioned.id_string();
+    let id = String::try_from(versioned.id())
+        .map_err(|e| format!("There was a problem converting the id {:?} to a string: {:?}", versioned.id(), e))?;
     let serialized = versioned.serialize_binary()
         .map_err(|e| format!("Error serializing identity: {:?}", e))?;
     let mut filename = data_dir.clone();
@@ -95,7 +97,8 @@ pub(crate) fn list_local_identities(search: Option<&str>) -> Result<Vec<Versione
                     if !entry.path().is_file() { continue; }
                     if let Some(identity) = load_identity(entry.file_name())? {
                         if let Some(filter_str) = search {
-                            let id_full = identity.id_string();
+                            let id_full = String::try_from(identity.id())
+                                .map_err(|e| format!("There was a problem converting the id {:?} to a string: {:?}", identity.id(), e))?;
                             let nickname = identity.nickname_maybe().unwrap_or(String::from(""));
                             let emails = identity.emails();
                             let names = identity.names();
