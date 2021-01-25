@@ -6,6 +6,7 @@ use crate::{
 use stamp_core::{
     identity::{
         ClaimSpec,
+        ClaimContainer,
         IdentityID,
         Relationship,
         RelationshipType,
@@ -123,6 +124,28 @@ pub fn list(id: &str, private: bool, verbose: bool) -> Result<(), String> {
         None
     };
     util::print_claims_table(identity.claims(), master_key_maybe, verbose);
+    Ok(())
+}
+
+pub fn delete(id: &str, claim_id: &str) -> Result<(), String> {
+    let identity = id::try_load_single_identity(id)?;
+    let mut found: Option<ClaimContainer> = None;
+    for claim in identity.claims() {
+        let id_str = id_str!(claim.claim().id())?;
+        if id_str.starts_with(claim_id) {
+            found = Some(claim.clone());
+            break;
+        }
+    }
+    let claim = found.ok_or(format!("Cannot find the claim {} in identity {}", claim_id, id))?;
+    if !util::yesno_prompt(&format!("Really delete the claim {} and all of its stamps? [y/N]", claim_id), "n")? {
+        return Ok(());
+    }
+    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", util::id_short(id)), identity.created())?;
+    let identity_mod = identity.remove_claim(&master_key, claim.claim().id())
+        .map_err(|e| format!("There was a problem removing the claim: {:?}", e))?;
+    db::save_identity(identity_mod)?;
+    println!("Claim removed!");
     Ok(())
 }
 

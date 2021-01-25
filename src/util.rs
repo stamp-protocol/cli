@@ -41,7 +41,18 @@ pub(crate) fn yesno_prompt(prompt: &str, default: &str) -> Result<bool, String> 
     return Ok(false);
 }
 
+pub fn id_short(id: &str) -> String {
+    String::from(&id[0..16])
+}
+
 macro_rules! id_str {
+    ($id:expr) => {
+        String::try_from($id)
+            .map_err(|e| format!("There was a problem converting the id {:?} to a string: {:?}", $id, e))
+    }
+}
+
+macro_rules! id_str_split {
     ($id:expr) => {
         match String::try_from($id) {
             Ok(id_full) => {
@@ -51,10 +62,6 @@ macro_rules! id_str {
             Err(..) => (String::from("<error serializing ID>"), String::from("<error serializing ID>")),
         }
     }
-}
-
-pub fn id_short(id: &str) -> String {
-    String::from(&id[0..16])
 }
 
 /// Grab a password and use it along with a timestamp to generate a master key.
@@ -107,7 +114,7 @@ pub fn print_identities_table(identities: &Vec<VersionedIdentity>, verbose: bool
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
     table.set_titles(row!["Mine", "ID", "Nickname", "Name", "Email", "Created"]);
     for identity in identities {
-        let (id_full, id_short) = id_str!(identity.id());
+        let (id_full, id_short) = id_str_split!(identity.id());
         let nickname = identity.nickname_maybe().unwrap_or(String::from(""));
         let name = identity.name_maybe().unwrap_or(String::from(""));
         let email = identity.email_maybe().unwrap_or(String::from(""));
@@ -130,7 +137,7 @@ pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
     table.set_titles(row!["ID", "Type", "Value", "Created", "# stamps"]);
     for claim in claims {
-        let (id_full, id_short) = id_str!(claim.claim().id());
+        let (id_full, id_short) = id_str_split!(claim.claim().id());
         let string_from_private = |private: &MaybePrivate<String>| -> String {
             if let Some(master_key) = master_key_maybe.as_ref() {
                 private.open(master_key).unwrap_or_else(|e| format!("Decryption error: {:?}", e))
@@ -145,7 +152,7 @@ pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option
         };
         let (ty, val) = match claim.claim().spec() {
             ClaimSpec::Identity(id) => {
-                let (id_full, id_short) = id_str!(id);
+                let (id_full, id_short) = id_str_split!(id);
                 ("identity", if verbose { id_full } else { id_short })
             }
             ClaimSpec::Name(name) => ("name", string_from_private(name)),
@@ -162,7 +169,7 @@ pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option
                             _ => String::from("<unknown>"),
                         };
                         let id: &IdentityID = relationship.who();
-                        let (id_full, id_short) = id_str!(id);
+                        let (id_full, id_short) = id_str_split!(id);
                         format!("{} ({})", if verbose { id_full } else { id_short }, ty_str)
                     }
                     MaybePrivate::Private(..) => String::from("******"),

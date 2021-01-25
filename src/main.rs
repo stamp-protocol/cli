@@ -1,9 +1,10 @@
 #[macro_use] extern crate prettytable;
 
+#[macro_use]
+mod util;
 mod commands;
 mod config;
 mod db;
-mod util;
 
 use clap::{Arg, App, AppSettings, ArgMatches, SubCommand};
 
@@ -88,10 +89,10 @@ fn run() -> Result<(), String> {
                                 .help("The location of the identity we're importing. Can be a local file or a URL."))
                 )
                 .subcommand(
-                    SubCommand::with_name("export")
+                    SubCommand::with_name("publish")
                         .setting(AppSettings::DisableVersion)
-                        .about("Export one of your identities. This outputs the identity in a format others can import. For instance you can publish it to a URL you own or a social network. Requires access to the identity's publish keypair.")
-                        .arg(id_arg("The ID of the identity we want to export. This overrides the configured default identity."))
+                        .about("Publish one of your identities. This outputs the identity in a format others can import. For instance you can publish it to a URL you own or a social network. Requires access to the identity's publish keypair.")
+                        .arg(id_arg("The ID of the identity we want to publish. This overrides the configured default identity."))
                 )
                 .subcommand(
                     SubCommand::with_name("delete")
@@ -190,6 +191,70 @@ fn run() -> Result<(), String> {
                                 .short("v")
                                 .help("Verbose output, with long-form IDs."))
                 )
+                .subcommand(
+                    SubCommand::with_name("delete")
+                        .about("Remove a claim from your identity.")
+                        .setting(AppSettings::DisableVersion)
+                        .arg(id_arg("The ID of the identity we are removing the claim from. This overrides the configured default identity."))
+                        .arg(Arg::with_name("CLAIM")
+                                .required(true)
+                                .index(1)
+                                .help("The ID of the claim we're deleting."))
+                )
+        )
+        .subcommand(
+            SubCommand::with_name("stamp")
+                .about("Create or revoke stamps on the claims of others' identities. Stamps are how you verify claims made by others.")
+                .setting(AppSettings::DisableVersion)
+                .setting(AppSettings::SubcommandRequiredElseHelp)
+                .subcommand(
+                    SubCommand::with_name("new")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Stamp a claim. This is a signal of trust between one identity and another.")
+                        .arg(id_arg("The ID of the identity we are stamping from. This must be one of your owned identities. This overrides the configured default identity."))
+                        .arg(Arg::with_name("CLAIM")
+                                .index(1)
+                                .required(true)
+                                .help("The ID (prefix or full) of the claim we wish to stamp."))
+                        .arg(Arg::with_name("CONFIDENCE")
+                                .index(2)
+                                .required(true)
+                                .possible_values(&["none", "low", "medium", "high", "extreme"])
+                                .help("This signals your confidence in the claim you are stamping.\nnone - you are not verifying the claim at all\nlow - you have done a quick and dirty verification of the claim\nmedium - you're doing a decent amount of verification\nhigh - you have verified the claim extensively (birth certificates, retinal scans, etc)\nextreme - you have lived in the same room with this person for the last 50 years and can be absolutely certain that the claim they are making is correct and they are not a hologram or something\n"))
+                )
+                .subcommand(
+                    SubCommand::with_name("list")
+                        .setting(AppSettings::DisableVersion)
+                        .about("List all stamps on a claim.")
+                        .arg(Arg::with_name("CLAIM")
+                                .index(1)
+                                .required(true)
+                                .help("The ID (prefix or full) of the claim we want to see stamps for."))
+                        .arg(Arg::with_name("verbose")
+                                .short("v")
+                                .help("Verbose output, with long-form IDs."))
+                )
+                .subcommand(
+                    SubCommand::with_name("accept")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Accept a stamp someone else has made on one of our claims.")
+                        .arg(Arg::with_name("LOCATION")
+                                .required(true)
+                                .index(1)
+                                .help("The stamp we're accepting, generally a file."))
+                )
+                .subcommand(
+                    SubCommand::with_name("revoke")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Revoke a stamp we've made on another identity. Note that the stamp must be present on an identity that's stored locally.")
+                        .arg(Arg::with_name("STAMP")
+                                .required(true)
+                                .index(1)
+                                .help("The ID of the stamp we're revoking."))
+                        .arg(Arg::with_name("yes")
+                                .short("y")
+                                .help("o not confirm revocation."))
+                )
         )
         .subcommand(
             SubCommand::with_name("keychain")
@@ -247,9 +312,9 @@ fn run() -> Result<(), String> {
                         .ok_or(format!("Must specify a location value"))?;
                     commands::id::import(location)?;
                 }
-                ("export", Some(args)) => {
+                ("publish", Some(args)) => {
                     let id = id_val(args)?;
-                    commands::id::export(&id)?;
+                    commands::id::publish(&id)?;
                 }
                 ("delete", Some(args)) => {
                     let search = args.value_of("SEARCH")
@@ -304,6 +369,30 @@ fn run() -> Result<(), String> {
                     let private = args.is_present("private");
                     let verbose = args.is_present("verbose");
                     commands::claim::list(&id, private, verbose)?;
+                }
+                ("delete", Some(args)) => {
+                    let id = id_val(args)?;
+                    let claim_id = args.value_of("CLAIM")
+                        .ok_or(format!("Must specify a claim ID"))?;
+                    commands::claim::delete(&id, claim_id)?;
+                }
+                _ => println!("{}", args.usage()),
+            }
+        }
+        ("stamp", Some(args)) => {
+            match args.subcommand() {
+                ("new", Some(args)) => {
+                    let claim_id = args.value_of("CLAIM")
+                        .ok_or(format!("Must specify a claim"))?;
+                    let confidence = args.value_of("CONFIDENCE")
+                        .ok_or(format!("Must specify a confidence value"))?;
+                    commands::stamp::new(claim_id, confidence)?;
+                }
+                ("list", Some(args)) => {
+                }
+                ("accept", Some(args)) => {
+                }
+                ("revoke", Some(args)) => {
                 }
                 _ => println!("{}", args.usage()),
             }

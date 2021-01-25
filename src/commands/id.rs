@@ -54,8 +54,7 @@ pub(crate) fn create_new() -> Result<(), String> {
         Ok(identity)
     }, None)?;
     println!("");
-    let id_str = String::try_from(identity.id())
-        .map_err(|e| format!("There was a problem converting the id {:?} to a string: {:?}", identity.id(), e))?;
+    let id_str = id_str!(identity.id())?;
     println!("Generated a new identity with the ID {}", id_str);
     println!("");
     let identity = prompt_claim_name_email(&master_key, identity)?;
@@ -113,8 +112,7 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
             .map_err(|e| format!("Error generating alpha keypair: {:?}", e))?;
         id = Identity::create_id(&tmp_master_key, &alpha_keypair, &now)
             .map_err(|e| format!("Error generating ID: {:?}", e))?;
-        let based = String::try_from(&id)
-            .map_err(|e| format!("There was a problem converting the id {:?} to a string: {:?}", id, e))?;
+        let based = id_str!(&id)?;
         if filter(&based) {
             break;
         }
@@ -127,9 +125,16 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
     let identity = Identity::new_with_alpha_and_id(&master_key, now, alpha_keypair, id)
         .map_err(|err| format!("Failed to create identity: {:?}", err))?;
     let identity = prompt_claim_name_email(&master_key, identity)?;
+    let id_str = id_str!(identity.id())?;
     master_key.mem_unlock().map_err(|_| format!("Unable to unlock master key memory."))?;
     let location = db::save_identity(identity)?;
     println!("---\nSuccess! New identity saved to:\n  {}", location.to_string_lossy());
+    let mut conf = config::load()?;
+    if conf.default_identity.is_none() {
+        println!("Marking identity as default.");
+        conf.default_identity = Some(id_str);
+        config::save(&conf)?;
+    }
     Ok(())
 }
 
@@ -145,7 +150,7 @@ pub fn import(location: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn export(id: &str) -> Result<(), String> {
+pub fn publish(id: &str) -> Result<(), String> {
     let identity = try_load_single_identity(id)?;
     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", util::id_short(id)), identity.created())?;
     let now = Timestamp::now();
@@ -174,8 +179,7 @@ pub fn delete(search: &str, skip_confirm: bool, permanent: bool, verbose: bool) 
         }
     }
     for identity in identities {
-        let id = String::try_from(identity.id())
-            .map_err(|e| format!("There was a problem converting the id {:?} to a string: {:?}", identity.id(), e))?;
+        let id = id_str!(identity.id())?;
         db::delete_identity(&id, permanent)?;
     }
     Ok(())
