@@ -1,138 +1,212 @@
 use crate::{
     util,
 };
+use rusqlite::{params, Connection};
 use stamp_core::{
-    identity::VersionedIdentity,
-};
-use std::{
-    convert::TryFrom,
-    fs::{self, File},
-    io::{
-        prelude::*,
-        BufReader,
+    identity::{
+        IdentityID,
+        VersionedIdentity,
     },
-    path::{Path, PathBuf},
 };
+use std::convert::TryFrom;
 
-fn data_dir() -> Result<PathBuf, String> {
-    util::data_dir()
+fn conn() -> Result<Connection, String> {
+    let dir = util::data_dir()?;
+    let mut db_file = dir.clone();
+    db_file.push("db.sqlite");
+    let flags =
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE |
+        rusqlite::OpenFlags::SQLITE_OPEN_CREATE |
+        rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let conn = Connection::open_with_flags(&db_file, flags)
+        .map_err(|e| format!("There was a problem loading the identity database: {}: {:?}", db_file.to_string_lossy(), e))?;
+    Ok(conn)
 }
 
-fn data_dir_id() -> Result<PathBuf, String> {
-    let mut dir = data_dir()?;
-    dir.push("identities");
-    Ok(dir)
+pub fn ensure_schema() -> Result<(), String> {
+    let conn = conn()?;
+    conn.execute("CREATE TABLE IF NOT EXISTS identities (id TEXT PRIMARY KEY, nickname TEXT, created TEXT NOT NULL, data BLOB NOT NULL, name_lookup JSON, email_lookup JSON, claim_lookup JSON, stamp_lookup JSON)", params![])
+        .map_err(|e| format!("Error initializing database: {:?}", e))?;
+    Ok(())
 }
 
-pub(crate) fn save_identity<T: Into<VersionedIdentity>>(identity: T) -> Result<PathBuf, String> {
-    let data_dir = data_dir_id()?;
-    fs::create_dir_all(&data_dir)
-        .map_err(|e| format!("Cannot create data directory: {:?}", e))?;
+fn json_arr(vec: &Vec<String>) -> String {
+    format!(r#"["{}"]"#, vec.join(r#"",""#))
+}
+
+pub fn save_identity<T: Into<VersionedIdentity>>(identity: T) -> Result<(), String> {
     let versioned = identity.into();
-    let id = id_str!(versioned.id())?;
+    let id_str = id_str!(versioned.id())?;
+    let nickname = versioned.nickname_maybe();
+    let created = format!("{}", versioned.created().format("%+"));
     let serialized = versioned.serialize_binary()
         .map_err(|e| format!("Error serializing identity: {:?}", e))?;
-    let mut filename = data_dir.clone();
-    filename.push(id);
-    let mut handle = File::create(&filename)
-        .map_err(|e| format!("Error opening identity file: {}: {:?}", filename.to_string_lossy(), e))?;
-    handle.write_all(serialized.as_slice())
-        .map_err(|e| format!("Error writing to identity file: {}: {:?}", filename.to_string_lossy(), e))?;
-    Ok(filename)
+
+    let name_lookup = versioned.names();
+    let email_lookup = versioned.emails();
+    let claim_lookup = versioned.claims().iter()
+        .map(|x| id_str!(x.claim().id()))
+        .collect::<Result<Vec<String>, String>>()
+        .map_err(|e| format!("Error grabbing claims for indexing: {:?}", e))?;
+    let stamp_lookup = versioned.claims().iter()
+        .map(|x| {
+            x.stamps().iter().map(|x| { id_str!(x.stamp().id()) })
+        })
+        .flatten()
+        .collect::<Result<Vec<String>, String>>()
+        .map_err(|e| format!("Error grabbing stamps for indexing: {:?}", e))?;
+
+    let conn = conn()?;
+    conn.execute("BEGIN", params![]).map_err(|e| format!("Error saving identity: {:?}", e))?;
+    conn.execute("DELETE FROM identities WHERE id = ?1", params![id_str])
+        .map_err(|e| format!("Error saving identity: {:?}", e))?;
+    conn.execute(
+        "INSERT INTO identities (id, nickname, created, data, name_lookup, email_lookup, claim_lookup, stamp_lookup) VALUES (?1, ?2, ?3, ?4, json(?5), json(?6), json(?7), json(?8))",
+        params![
+            id_str,
+            nickname,
+            created,
+            serialized,
+            json_arr(&name_lookup),
+            json_arr(&email_lookup),
+            json_arr(&claim_lookup),
+            json_arr(&stamp_lookup),
+        ]
+    ).map_err(|e| format!("Error saving identity: {:?}", e))?;
+    conn.execute("COMMIT", params![]).map_err(|e| format!("Error saving identity: {:?}", e))?;
+    Ok(())
 }
 
 /// Load an identity by ID.
-pub(crate) fn load_identity<T: AsRef<Path>>(id: T) -> Result<Option<VersionedIdentity>, String> {
-    let data_dir = data_dir_id()?;
-    let mut filename = data_dir.clone();
-    filename.push(id);
-    let file = File::open(&filename)
-        .map_err(|e| format!("Unable to open identity file: {}: {:?}", filename.to_string_lossy(), e))?;
-    let mut reader = BufReader::new(file);
-    let mut contents = Vec::new();
-    reader.read_to_end(&mut contents)
-        .map_err(|e| format!("Problem reading identity file: {}: {:?}", filename.to_string_lossy(), e))?;
-    let identity = VersionedIdentity::deserialize_binary(contents.as_slice())
-        .map_err(|e| format!("Problem deserializing identity: {}: {:?}", filename.to_string_lossy(), e))?;
-    Ok(Some(identity))
-}
-
-/// Load an identity by ID.
-pub(crate) fn load_identities_by_prefix<T: AsRef<Path>>(id_prefix: T) -> Result<Vec<VersionedIdentity>, String> {
-    let data_dir = data_dir_id()?;
-    let mut filename = data_dir.clone();
-    filename.push(format!("{}*", id_prefix.as_ref().to_string_lossy()));
-
-    let mut identities = Vec::new();
-    let entries = glob::glob(&filename.to_string_lossy())
-        .map_err(|e| format!("Problem reading identity files: {:?}", e))?;
-    for entry in entries {
-        match entry {
-            Ok(path) => {
-                if !path.is_file() { continue; }
-                let identity = load_identity(path.file_name().unwrap_or("".as_ref()))?;
-                if let Some(identity) = identity {
-                    identities.push(identity);
-                }
-            }
-            Err(e) => Err(format!("Problem reading identity files: {:?}", e))?,
+pub fn load_identity(id: &IdentityID) -> Result<Option<VersionedIdentity>, String> {
+    let conn = conn()?;
+    let id_str = id_str!(id)?;
+    let qry_res = conn.query_row(
+        "SELECT data FROM identities WHERE id = ?1 ORDER BY created ASC",
+        params![id_str],
+        |row| row.get(0)
+    );
+    let blob: Option<Vec<u8>> = match qry_res {
+        Ok(blob) => Some(blob),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => Err(format!("Error loading identity: {:?}", e))?,
+    };
+    match blob {
+        Some(data) => {
+            let identity = VersionedIdentity::deserialize_binary(data.as_slice())
+                .map_err(|e| format!("Problem deserializing identity: {:?}", e))?;
+            Ok(Some(identity))
         }
+        None => Ok(None),
+    }
+}
+
+/// Load an identity by ID.
+pub fn load_identities_by_prefix(id_prefix: &str) -> Result<Vec<VersionedIdentity>, String> {
+    let conn = conn()?;
+    let mut stmt = conn.prepare("SELECT data FROM identities WHERE id like ?1 ORDER BY created ASC")
+        .map_err(|e| format!("Error loading identities: {:?}", e))?;
+    let rows = stmt.query_map(params![format!("{}%", id_prefix)], |row| row.get(0))
+        .map_err(|e| format!("Error loading identities: {:?}", e))?;
+    let mut identities = Vec::new();
+    for data in rows {
+        let data_bin: Vec<u8> = data.map_err(|e| format!("Error loading identity: {:?}", e))?;
+        let deserialized = VersionedIdentity::deserialize_binary(&data_bin)
+            .map_err(|e| format!("Error deserializing identity: {:?}", e))?;
+        identities.push(deserialized);
     }
     Ok(identities)
 }
 
 /// List identities stored locally.
-pub(crate) fn list_local_identities(search: Option<&str>) -> Result<Vec<VersionedIdentity>, String> {
-    let dir = data_dir_id()?;
+pub fn list_local_identities(search: Option<&str>) -> Result<Vec<VersionedIdentity>, String> {
+    let conn = conn()?;
+    let qry = if search.is_some() {
+        r#"
+            SELECT DISTINCT
+                i.id, i.data
+            FROM
+                identities i,
+                json_each(i.name_lookup) jnl,
+                json_each(i.email_lookup) jel,
+                json_each(i.claim_lookup) jcl,
+                json_each(i.stamp_lookup) jsl
+            WHERE
+                i.id LIKE ?1 OR
+                jnl.value LIKE ?1 OR
+                jel.value LIKE ?1 OR
+                jcl.value LIKE ?1 OR
+                jsl.value LIKE ?1
+            ORDER BY
+                i.created ASC
+        "#
+    } else {
+        r#"SELECT i.id, i.data FROM identities i ORDER BY i.created ASC"#
+    };
+
+    let mut stmt = conn.prepare(qry)
+        .map_err(|e| format!("Error loading identities: {:?}", e))?;
+    let row_mapper = |row: &rusqlite::Row<'_>| -> rusqlite::Result<_> { row.get(1) };
+    let rows = if let Some(search) = search {
+        let finder = format!("%{}%", search);
+        stmt.query_map(params![finder], row_mapper)
+            .map_err(|e| format!("Error loading identities: {:?}", e))?
+    } else {
+        stmt.query_map(params![], row_mapper)
+            .map_err(|e| format!("Error loading identities: {:?}", e))?
+    };
     let mut identities = Vec::new();
-    if dir.is_dir() {
-        let entries = fs::read_dir(&dir)
-            .map_err(|e| format!("Cannot read directory: {}: {:?}", dir.to_string_lossy(), e))?;
-        for entry in entries {
-            match entry {
-                Ok(entry) => {
-                    if !entry.path().is_file() { continue; }
-                    if let Some(identity) = load_identity(entry.file_name())? {
-                        if let Some(filter_str) = search {
-                            let id_full = id_str!(identity.id())?;
-                            let nickname = identity.nickname_maybe().unwrap_or(String::from(""));
-                            let emails = identity.emails();
-                            let names = identity.names();
-                            let filter = &filter_str.to_lowercase();
-                            if !(id_full.to_lowercase().contains(filter) ||
-                                 nickname.to_lowercase().contains(filter) ||
-                                 names.iter().filter(|x| x.contains(filter)).count() > 0 ||
-                                 emails.iter().filter(|x| x.contains(filter)).count() > 0) {
-                                continue;
-                            }
-                        }
-                        identities.push(identity);
-                    }
-                }
-                _ => {}
-            }
-        }
+    for data in rows {
+        let data_bin: Vec<u8> = data.map_err(|e| format!("Error loading identity: {:?}", e))?;
+        let deserialized = VersionedIdentity::deserialize_binary(&data_bin)
+            .map_err(|e| format!("Error deserializing identity: {:?}", e))?;
+        identities.push(deserialized);
     }
     Ok(identities)
 }
 
-/// Delete a local identity by id.
-pub(crate) fn delete_identity<T: AsRef<Path>>(id: T, permanent: bool) -> Result<(), String> {
-    let dir = data_dir_id()?;
-    let mut filename = dir.clone();
-    filename.push(&id);
-    if permanent {
-        fs::remove_file(&filename)
-            .map_err(|e| format!("Error deleting file: {}: {:?}", filename.to_string_lossy(), e))?;
-    } else {
-        let mut trash = dir.clone();
-        trash.push("trash");    // I'M THE TRAAAAASH MAN
-        fs::create_dir_all(&trash)
-            .map_err(|e| format!("Cannot create trash directory: {:?}", e))?;
-        trash.push(&id);
-        fs::rename(filename, trash)
-            .map_err(|e| format!("Error moving identity to trash: {:?}", e))?;
+pub fn find_identity_by_prefix(ty: &str, id_prefix: &str) -> Result<Option<VersionedIdentity>, String> {
+    let conn = conn()?;
+    let qry = format!(r#"
+        SELECT DISTINCT
+            i.id, i.data
+        FROM
+            identities i,
+            json_each(i.{}_lookup) jcl
+        WHERE
+            jcl.value LIKE ?1
+        ORDER BY
+            i.created ASC
+    "#, ty);
+
+    let finder = format!("{}%", id_prefix);
+    let qry_res = conn.query_row(
+        &qry,
+        params![finder],
+        |row| row.get(1)
+    );
+    let blob: Option<Vec<u8>> = match qry_res {
+        Ok(blob) => Some(blob),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => Err(format!("Error loading identity: {:?}", e))?,
+    };
+    match blob {
+        Some(data) => {
+            let identity = VersionedIdentity::deserialize_binary(data.as_slice())
+                .map_err(|e| format!("Problem deserializing identity: {:?}", e))?;
+            Ok(Some(identity))
+        }
+        None => Ok(None),
     }
+}
+
+/// Delete a local identity by id.
+pub fn delete_identity(id: &str) -> Result<(), String> {
+    let conn = conn()?;
+    conn.execute("BEGIN", params![]).map_err(|e| format!("Error deleting identity: {:?}", e))?;
+    conn.execute("DELETE FROM identities WHERE id = ?1", params![id])
+        .map_err(|e| format!("Error deleting identity: {:?}", e))?;
+    conn.execute("COMMIT", params![]).map_err(|e| format!("Error deleting identity: {:?}", e))?;
     Ok(())
 }
 

@@ -15,3 +15,11 @@ pub fn root_sig(id: &str) -> Result<(), String> {
     println!("Identity re-signed");
     Ok(())
 }
+
+pub fn resave(id: &str) -> Result<(), String> {
+    let identity = id::try_load_single_identity(id)?;
+    db::save_identity(identity)?;
+    println!("Identity re-saved");
+    Ok(())
+}
+

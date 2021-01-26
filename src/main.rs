@@ -10,6 +10,7 @@ use clap::{Arg, App, AppSettings, ArgMatches, SubCommand};
 
 fn run() -> Result<(), String> {
     let conf = config::load()?;
+    db::ensure_schema()?;
     let id_arg = |help: &'static str| -> Arg {
         let arg = Arg::with_name("identity")
             .short("i")
@@ -22,7 +23,7 @@ fn run() -> Result<(), String> {
             .map(|x| String::from(x))
             .or_else(|| {
                 if let Some(id_full) = conf.default_identity.as_ref() {
-                    util::print_wrapped(&format!("Selecting default identity {} (override with `-i <ID>`)\n", util::id_short(&id_full)));
+                    eprintln!("Selecting default identity {} (override with `-i <ID>`)\n", util::id_short(&id_full));
                 }
                 conf.default_identity.clone()
             })
@@ -33,6 +34,7 @@ fn run() -> Result<(), String> {
         .bin_name("stamp")
         .max_term_width(util::term_maxwidth())
         .about("A command line interface to the Stamp identity protocol.")
+        .after_help("EXAMPLES:\n    stamp id new\n        Create a new identity\n    stamp id list\n        List all local identities\n    stamp keychain passwd\n        Change the password for your default identity")
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .global_setting(AppSettings::VersionlessSubcommands)
         .global_setting(AppSettings::InferSubcommands)
@@ -41,6 +43,7 @@ fn run() -> Result<(), String> {
         .subcommand(
             SubCommand::with_name("id")
                 .about("The `id` command helps with managing identities, such as creating new ones or importing identities from other people.")
+                .alias("identity")
                 .setting(AppSettings::DisableVersion)
                 .setting(AppSettings::SubcommandRequiredElseHelp)
                 .subcommand(
@@ -82,7 +85,7 @@ fn run() -> Result<(), String> {
                 .subcommand(
                     SubCommand::with_name("import")
                         .setting(AppSettings::DisableVersion)
-                        .about("Import a published identity, for instance to verify a signature they have made or to stamp one of their claims.")
+                        .about("Import an identity. It can be either one of your private identities you exported or someone else's published identity that you're importing to verify a signature they made or to stamp one of their claims.")
                         .arg(Arg::with_name("LOCATION")
                                 .required(true)
                                 .index(1)
@@ -93,6 +96,20 @@ fn run() -> Result<(), String> {
                         .setting(AppSettings::DisableVersion)
                         .about("Publish one of your identities. This outputs the identity in a format others can import. For instance you can publish it to a URL you own or a social network. Requires access to the identity's publish keypair.")
                         .arg(id_arg("The ID of the identity we want to publish. This overrides the configured default identity."))
+                        .arg(Arg::with_name("output")
+                                .short("o")
+                                .takes_value(true)
+                                .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
+                )
+                .subcommand(
+                    SubCommand::with_name("export-private")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Export one of your identities. This export includes private keys so even though it is encrypted, it's important you do not share it with *anybody*. EVER.")
+                        .arg(id_arg("The ID of the identity we want to publish. This overrides the configured default identity."))
+                        .arg(Arg::with_name("output")
+                                .short("o")
+                                .takes_value(true)
+                                .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
                 )
                 .subcommand(
                     SubCommand::with_name("delete")
@@ -105,17 +122,24 @@ fn run() -> Result<(), String> {
                         .arg(Arg::with_name("yes")
                                 .short("y")
                                 .help("Do not confirm deletion, just delete. Use with caution."))
-                        .arg(Arg::with_name("permanent")
-                                .short("p")
-                                .help("Delete the identity completely instead of moving to trash."))
                         .arg(Arg::with_name("verbose")
                                 .short("v")
                                 .help("Use verbose output with long-form IDs when printing deletion table."))
+                )
+                .subcommand(
+                    SubCommand::with_name("view")
+                        .setting(AppSettings::DisableVersion)
+                        .about("View a full identity in human-readable format. Not suitable for sharing, importing, etc.")
+                        .arg(Arg::with_name("SEARCH")
+                                .required(true)
+                                .index(1)
+                                .help("An identity ID, name, or email to search for when deleting."))
                 )
         )
         .subcommand(
             SubCommand::with_name("claim")
                 .about("Manages claims for identities you own. Claims are pieces of identifying information attached to your identity that others can verify and \"stamp.\"")
+                .alias("claims")
                 .setting(AppSettings::DisableVersion)
                 .setting(AppSettings::SubcommandRequiredElseHelp)
                 .subcommand(
@@ -205,6 +229,7 @@ fn run() -> Result<(), String> {
         .subcommand(
             SubCommand::with_name("stamp")
                 .about("Create or revoke stamps on the claims of others' identities. Stamps are how you verify claims made by others.")
+                .alias("stamps")
                 .setting(AppSettings::DisableVersion)
                 .setting(AppSettings::SubcommandRequiredElseHelp)
                 .subcommand(
@@ -216,11 +241,10 @@ fn run() -> Result<(), String> {
                                 .index(1)
                                 .required(true)
                                 .help("The ID (prefix or full) of the claim we wish to stamp."))
-                        .arg(Arg::with_name("CONFIDENCE")
-                                .index(2)
-                                .required(true)
-                                .possible_values(&["none", "low", "medium", "high", "extreme"])
-                                .help("This signals your confidence in the claim you are stamping.\nnone - you are not verifying the claim at all\nlow - you have done a quick and dirty verification of the claim\nmedium - you're doing a decent amount of verification\nhigh - you have verified the claim extensively (birth certificates, retinal scans, etc)\nextreme - you have lived in the same room with this person for the last 50 years and can be absolutely certain that the claim they are making is correct and they are not a hologram or something\n"))
+                        .arg(Arg::with_name("output")
+                                .short("o")
+                                .takes_value(true)
+                                .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
                 )
                 .subcommand(
                     SubCommand::with_name("list")
@@ -238,6 +262,7 @@ fn run() -> Result<(), String> {
                     SubCommand::with_name("accept")
                         .setting(AppSettings::DisableVersion)
                         .about("Accept a stamp someone else has made on one of our claims.")
+                        .arg(id_arg("The ID of the identity we are accepting the stamp for. This must be one of your owned identities. This overrides the configured default identity."))
                         .arg(Arg::with_name("LOCATION")
                                 .required(true)
                                 .index(1)
@@ -262,6 +287,56 @@ fn run() -> Result<(), String> {
                 .setting(AppSettings::DisableVersion)
                 .setting(AppSettings::SubcommandRequiredElseHelp)
                 .subcommand(
+                    SubCommand::with_name("new")
+                        .about("Create a new subkey and add it to your keychain.")
+                        .setting(AppSettings::DisableVersion)
+                        .arg(id_arg("The ID of the identity we want to change the password for."))
+                        .arg(Arg::with_name("TYPE")
+                                .required(true)
+                                .index(1)
+                                .possible_values(&["sign", "crypto", "secret"])
+                                .help("The type of key we're creating."))
+                        .arg(Arg::with_name("NAME")
+                                .required(true)
+                                .index(2)
+                                .help("This key's name. The name is public and allows for organization and referencing the key by a memorable value. Ex: turtl:master-key"))
+                        .arg(Arg::with_name("description")
+                                .short("d")
+                                .takes_value(true)
+                                .help("They key's description, ex: Use this key to send me emails."))
+                )
+                .subcommand(
+                    SubCommand::with_name("list")
+                        .about("List the keys in a keychain.")
+                        .setting(AppSettings::DisableVersion)
+                        .arg(id_arg("The ID of the identity we want to list keys for."))
+                        .arg(Arg::with_name("verbose")
+                                .short("v")
+                                .help("Verbose output, with long-form IDs."))
+                        .arg(Arg::with_name("SEARCH")
+                                .index(1)
+                                .help("The ID or name of the key(s) we're searching for."))
+                )
+                .subcommand(
+                    SubCommand::with_name("delete")
+                        .about("Delete a key from your keychain. Mainly, you'll want to only use this for secret key types. If you're deleting a signing or crypto key, you really might want the `revoke` command instead.")
+                        .setting(AppSettings::DisableVersion)
+                        .arg(id_arg("The ID of the identity we want to delete keys from."))
+                        .arg(Arg::with_name("SEARCH")
+                                .required(true)
+                                .index(1)
+                                .help("The ID or name of the key(s) we're searching for."))
+                )
+                .subcommand(
+                    SubCommand::with_name("revoke")
+                        .about("Revoke a key in your keychain. Generally, unless the key is a secret key, you'll want to revoke the key (this command) instead of deleting it.")
+                        .setting(AppSettings::DisableVersion)
+                        .arg(id_arg("The ID of the identity we want to revoke a key of."))
+                        .arg(Arg::with_name("SEARCH")
+                                .index(1)
+                                .help("The ID or name of the key(s) we're searching for."))
+                )
+                .subcommand(
                     SubCommand::with_name("passwd")
                         .setting(AppSettings::DisableVersion)
                         .about("Change the master passphrase for the private keys in an identity.")
@@ -270,8 +345,23 @@ fn run() -> Result<(), String> {
                 )
         )
         .subcommand(
+            SubCommand::with_name("config")
+                .about("Allows manipulation of the local configuration.")
+                .setting(AppSettings::DisableVersion)
+                .setting(AppSettings::SubcommandRequiredElseHelp)
+                .subcommand(
+                    SubCommand::with_name("set-default")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Set the default identity ID used for many of the other commands")
+                        .arg(Arg::with_name("SEARCH")
+                                .required(true)
+                                .index(1)
+                                .help("An identity ID, name, or email to search for when deleting."))
+                )
+        )
+        .subcommand(
             SubCommand::with_name("debug")
-                .about("Tools for Stamp development. Best to steer clear of here or I fear, my dear, trouble may appear. ")
+                .about("Tools for Stamp development. Will change rapidly and unexpectedly, so don't rely on these too heavily.")
                 .setting(AppSettings::DisableVersion)
                 .setting(AppSettings::SubcommandRequiredElseHelp)
                 .subcommand(
@@ -279,6 +369,12 @@ fn run() -> Result<(), String> {
                         .setting(AppSettings::DisableVersion)
                         .about("Regenerate the root signature on an identity. This should only ever be needed if the root signature algorithm changes or there's a bug in the implementation, causing it to not be set correctly.")
                         .arg(id_arg("The ID of the identity we want to re-sign."))
+                )
+                .subcommand(
+                    SubCommand::with_name("resave")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Load an identity from the database and save it again. Useful for dealing with database changes.")
+                        .arg(id_arg("The ID of the identity we want to re-save."))
                 )
         );
     let args = app.get_matches();
@@ -314,15 +410,28 @@ fn run() -> Result<(), String> {
                 }
                 ("publish", Some(args)) => {
                     let id = id_val(args)?;
-                    commands::id::publish(&id)?;
+                    let output = args.value_of("output").unwrap_or("-");
+                    let published = commands::id::publish(&id)?;
+                    util::write_file(output, published.as_bytes())?;
+                }
+                ("export-private", Some(args)) => {
+                    let id = id_val(args)?;
+                    let output = args.value_of("output").unwrap_or("-");
+                    let serialized = commands::id::export_private(&id)?;
+                    util::write_file(output, serialized.as_slice())?;
                 }
                 ("delete", Some(args)) => {
                     let search = args.value_of("SEARCH")
                         .ok_or(format!("Must specify a search value"))?;
                     let skip_confirm = args.is_present("yes");
-                    let permanent = args.is_present("permanent");
                     let verbose = args.is_present("verbose");
-                    commands::id::delete(search, skip_confirm, permanent, verbose)?
+                    commands::id::delete(search, skip_confirm, verbose)?
+                }
+                ("view", Some(args)) => {
+                    let search = args.value_of("SEARCH")
+                        .ok_or(format!("Must specify a search value"))?;
+                    let identity = commands::id::view(search)?;
+                    println!("{}", identity);
                 }
                 _ => println!("{}", args.usage()),
             }
@@ -382,26 +491,70 @@ fn run() -> Result<(), String> {
         ("stamp", Some(args)) => {
             match args.subcommand() {
                 ("new", Some(args)) => {
+                    let our_identity_id = id_val(args)?;
                     let claim_id = args.value_of("CLAIM")
                         .ok_or(format!("Must specify a claim"))?;
-                    let confidence = args.value_of("CONFIDENCE")
-                        .ok_or(format!("Must specify a confidence value"))?;
-                    commands::stamp::new(claim_id, confidence)?;
+                    let output = args.value_of("output").unwrap_or("-");
+                    let stamp = commands::stamp::new(&our_identity_id, claim_id)?;
+                    util::write_file(output, stamp.as_bytes())?;
                 }
                 ("list", Some(args)) => {
+                    drop(args);
                 }
                 ("accept", Some(args)) => {
+                    let identity_id = id_val(args)?;
+                    let location = args.value_of("LOCATION")
+                        .ok_or(format!("Must specify a stamp location"))?;
+                    commands::stamp::accept(&identity_id, location)?;
                 }
                 ("revoke", Some(args)) => {
+                    drop(args);
                 }
                 _ => println!("{}", args.usage()),
             }
         }
         ("keychain", Some(args)) => {
             match args.subcommand() {
+                ("new", Some(args)) => {
+                    let id = id_val(args)?;
+                    let ty = args.value_of("TYPE")
+                        .ok_or(format!("Must specify a type"))?;
+                    let name = args.value_of("NAME")
+                        .ok_or(format!("Must specify a name"))?;
+                    let desc = args.value_of("description");
+                    commands::keychain::new(&id, ty, name, desc)?;
+                }
+                ("list", Some(args)) => {
+                    let id = id_val(args)?;
+                    let search = args.value_of("SEARCH");
+                    let verbose = args.is_present("verbose");
+                    commands::keychain::list(&id, search, verbose)?;
+                }
+                ("delete", Some(args)) => {
+                    let id = id_val(args)?;
+                    let search = args.value_of("SEARCH")
+                        .ok_or(format!("Must specify a key id or name"))?;
+                    commands::keychain::delete(&id, search)?;
+                }
+                ("revoke", Some(args)) => {
+                    let id = id_val(args)?;
+                    let search = args.value_of("SEARCH")
+                        .ok_or(format!("Must specify a key id or name"))?;
+                    commands::keychain::revoke(&id, search)?;
+                }
                 ("passwd", Some(args)) => {
                     let id = id_val(args)?;
-                    commands::key::passwd(&id)?;
+                    commands::keychain::passwd(&id)?;
+                }
+                _ => println!("{}", args.usage()),
+            }
+        }
+        ("config", Some(args)) => {
+            match args.subcommand() {
+                ("set-default", Some(args)) => {
+                    let search = args.value_of("SEARCH")
+                        .ok_or(format!("Must specify a search value"))?;
+                    commands::config::set_default(search)?;
                 }
                 _ => println!("{}", args.usage()),
             }
@@ -412,6 +565,11 @@ fn run() -> Result<(), String> {
                     // no default here, debug commands should be explicit
                     let id = args.value_of("identity").ok_or(format!("Must specify an ID"))?;
                     commands::debug::root_sig(id)?;
+                }
+                ("resave", Some(args)) => {
+                    // no default here, debug commands should be explicit
+                    let id = args.value_of("identity").ok_or(format!("Must specify an ID"))?;
+                    commands::debug::resave(id)?;
                 }
                 _ => println!("{}", args.usage()),
             }

@@ -3,6 +3,7 @@ use crate::{
     db,
     util
 };
+use prettytable::Table;
 use stamp_core::{
     identity::{Identity, VersionedIdentity, ClaimSpec, PublishedIdentity},
     key::{SecretKey, SignKeypair},
@@ -38,7 +39,7 @@ fn prompt_claim_name_email(master_key: &SecretKey, id: Identity) -> Result<Ident
 pub fn try_load_single_identity(id: &str) -> Result<VersionedIdentity, String> {
     let identities = db::load_identities_by_prefix(id)?;
     if identities.len() > 1 {
-        util::print_identities_table(&identities, false);
+        print_identities_table(&identities, false);
         Err(format!("Multiple identities matched that ID"))?;
     } else if identities.len() == 0 {
         Err(format!("No identities matches that ID"))?;
@@ -59,8 +60,8 @@ pub(crate) fn create_new() -> Result<(), String> {
     println!("");
     let identity = prompt_claim_name_email(&master_key, identity)?;
     master_key.mem_unlock().map_err(|_| format!("Unable to unlock master key memory."))?;
-    let location = db::save_identity(identity)?;
-    println!("---\nSuccess! New identity saved to:\n  {}", location.to_string_lossy());
+    db::save_identity(identity)?;
+    println!("---\nSuccess!");
     let mut conf = config::load()?;
     if conf.default_identity.is_none() {
         println!("Marking identity as default.");
@@ -127,8 +128,8 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
     let identity = prompt_claim_name_email(&master_key, identity)?;
     let id_str = id_str!(identity.id())?;
     master_key.mem_unlock().map_err(|_| format!("Unable to unlock master key memory."))?;
-    let location = db::save_identity(identity)?;
-    println!("---\nSuccess! New identity saved to:\n  {}", location.to_string_lossy());
+    db::save_identity(identity)?;
+    println!("---\nSuccess!");
     let mut conf = config::load()?;
     if conf.default_identity.is_none() {
         println!("Marking identity as default.");
@@ -140,17 +141,35 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
 
 pub fn list(search: Option<&str>, verbose: bool) -> Result<(), String> {
     let identities = db::list_local_identities(search)?;
-    util::print_identities_table(&identities, verbose);
+    print_identities_table(&identities, verbose);
     Ok(())
 }
 
 pub fn import(location: &str) -> Result<(), String> {
-    drop(location);
-    println!("IMPLEMENT ME!");
+    let contents = util::load_file(location)?;
+    // first try importing an owned identity
+    let imported = VersionedIdentity::deserialize_binary(contents.as_slice())
+        .or_else(|_| {
+            PublishedIdentity::deserialize(contents.as_slice())
+                .map(|x| x.identity().clone())
+        })
+        .map_err(|e| format!("Problem loading identity: {:?}", e))?;
+    let exists = db::load_identity(imported.id())?;
+    if let Some(existing) = exists {
+        if existing.is_owned() && !imported.is_owned() {
+            Err(format!("You are attempting to overwrite an existing owned identity with a public identity, which will erase all of your private data."))?;
+        }
+        if !util::yesno_prompt("The identity you're importing already exists locally. Overwrite? [y/N]", "n")? {
+            return Ok(());
+        }
+    }
+    let id_str = id_str!(imported.id())?;
+    db::save_identity(imported)?;
+    println!("Imported identity {}", id_str);
     Ok(())
 }
 
-pub fn publish(id: &str) -> Result<(), String> {
+pub fn publish(id: &str) -> Result<String, String> {
     let identity = try_load_single_identity(id)?;
     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", util::id_short(id)), identity.created())?;
     let now = Timestamp::now();
@@ -158,30 +177,70 @@ pub fn publish(id: &str) -> Result<(), String> {
         .map_err(|e| format!("Error creating published identity: {:?}", e))?;
     let serialized = published.serialize()
         .map_err(|e| format!("Error serializing identity: {:?}", e))?;
-    println!("{}", serialized);
-    Ok(())
+    Ok(serialized)
 }
 
-pub fn delete(search: &str, skip_confirm: bool, permanent: bool, verbose: bool) -> Result<(), String> {
+pub fn export_private(id: &str) -> Result<Vec<u8>, String> {
+    let identity = try_load_single_identity(id)?;
+    let serialized = identity.serialize_binary()
+        .map_err(|e| format!("There was a problem serializing the identity: {:?}", e))?;
+    Ok(serialized)
+}
+
+pub fn delete(search: &str, skip_confirm: bool, verbose: bool) -> Result<(), String> {
     let identities = db::list_local_identities(Some(search))?;
     if identities.len() == 0 {
         Err(format!("No identities match that search"))?;
     }
-    util::print_identities_table(&identities, verbose);
+    print_identities_table(&identities, verbose);
     if !skip_confirm {
-        let msg = if permanent {
-            format!("Permanently delete these {} identities? [y/N]", identities.len())
-        } else {
-            format!("Move these {} identities to the trash? [y/N]", identities.len())
-        };
+        let msg = format!("Permanently delete these {} identities? [y/N]", identities.len());
         if !util::yesno_prompt(&msg, "n")? {
             return Ok(());
         }
     }
     for identity in identities {
         let id = id_str!(identity.id())?;
-        db::delete_identity(&id, permanent)?;
+        db::delete_identity(&id)?;
     }
     Ok(())
+}
+
+pub fn view(search: &str) -> Result<String, String> {
+    let identities = db::list_local_identities(Some(search))?;
+    if identities.len() > 1 {
+        print_identities_table(&identities, false);
+        Err(format!("Multiple identities matched that search"))?;
+    } else if identities.len() == 0 {
+        Err(format!("No identities match that search"))?;
+    }
+    let identity = identities[0].clone();
+    let serialized = identity.serialize()
+        .map_err(|e| format!("Problem serializing identity: {:?}", e))?;
+    Ok(serialized)
+}
+
+/// Output a table of identities.
+pub fn print_identities_table(identities: &Vec<VersionedIdentity>, verbose: bool) {
+    let mut table = Table::new();
+    table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    table.set_titles(row!["Mine", "ID", "Nickname", "Name", "Email", "Created"]);
+    for identity in identities {
+        let (id_full, id_short) = id_str_split!(identity.id());
+        let nickname = identity.nickname_maybe().unwrap_or(String::from(""));
+        let name = identity.name_maybe().unwrap_or(String::from(""));
+        let email = identity.email_maybe().unwrap_or(String::from(""));
+        let created = identity.created().local().format("%b %d, %Y").to_string();
+        let owned = if identity.is_owned() { "x" } else { "" };
+        table.add_row(row![
+            owned,
+            if verbose { &id_full } else { &id_short },
+            nickname,
+            name,
+            email,
+            created,
+        ]);
+    }
+    table.printstd();
 }
 

@@ -3,6 +3,7 @@ use crate::{
     db,
     util,
 };
+use prettytable::Table;
 use stamp_core::{
     identity::{
         ClaimSpec,
@@ -29,9 +30,9 @@ fn prompt_claim_value(prompt: &str) -> Result<String, String> {
 fn claim_pre(id: &str, prompt: &str) -> Result<(SecretKey, VersionedIdentity, String), String> {
     let identity = id::try_load_single_identity(id)?;
     let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", util::id_short(id)), identity.created())?;
-    let value = prompt_claim_value(prompt)?;
     identity.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+    let value = prompt_claim_value(prompt)?;
     Ok((master_key, identity, value))
 }
 
@@ -123,7 +124,7 @@ pub fn list(id: &str, private: bool, verbose: bool) -> Result<(), String> {
     } else {
         None
     };
-    util::print_claims_table(identity.claims(), master_key_maybe, verbose);
+    print_claims_table(identity.claims(), master_key_maybe, verbose);
     Ok(())
 }
 
@@ -147,5 +148,63 @@ pub fn delete(id: &str, claim_id: &str) -> Result<(), String> {
     db::save_identity(identity_mod)?;
     println!("Claim removed!");
     Ok(())
+}
+
+pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option<SecretKey>, verbose: bool) {
+    let mut table = Table::new();
+    table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    table.set_titles(row!["ID", "Type", "Value", "Created", "# stamps"]);
+    for claim in claims {
+        let (id_full, id_short) = id_str_split!(claim.claim().id());
+        let string_from_private = |private: &MaybePrivate<String>| -> String {
+            if let Some(master_key) = master_key_maybe.as_ref() {
+                private.open(master_key).unwrap_or_else(|e| format!("Decryption error: {:?}", e))
+            } else {
+                match private {
+                    MaybePrivate::Public(val) => val.clone(),
+                    MaybePrivate::Private(..) => {
+                        String::from("<private>")
+                    }
+                }
+            }
+        };
+        let (ty, val) = match claim.claim().spec() {
+            ClaimSpec::Identity(id) => {
+                let (id_full, id_short) = id_str_split!(id);
+                ("identity", if verbose { id_full } else { id_short })
+            }
+            ClaimSpec::Name(name) => ("name", string_from_private(name)),
+            ClaimSpec::Email(email) => ("email", string_from_private(email)),
+            ClaimSpec::PGP(pgp) => ("pgp", string_from_private(pgp)),
+            ClaimSpec::HomeAddress(address) => ("address", string_from_private(address)),
+            ClaimSpec::Relation(relation) => {
+                let rel_str = match relation {
+                    MaybePrivate::Public(relationship) => {
+                        let ty_str = match relationship.ty() {
+                            RelationshipType::Family => String::from("family"),
+                            RelationshipType::Friend => String::from("friend"),
+                            RelationshipType::OrganizationMember => String::from("org"),
+                            _ => String::from("<unknown>"),
+                        };
+                        let id: &IdentityID = relationship.who();
+                        let (id_full, id_short) = id_str_split!(id);
+                        format!("{} ({})", if verbose { id_full } else { id_short }, ty_str)
+                    }
+                    MaybePrivate::Private(..) => String::from("******"),
+                };
+                ("relation", rel_str)
+            }
+            _ => ("<unknown>", String::from("<unknown>")),
+        };
+        let created = claim.claim().created().local().format("%b %d, %Y").to_string();
+        table.add_row(row![
+            if verbose { &id_full } else { &id_short },
+            ty,
+            val,
+            created,
+            format!("{}", claim.stamps().len()),
+        ]);
+    }
+    table.printstd();
 }
 
