@@ -130,6 +130,7 @@ fn run() -> Result<(), String> {
                     SubCommand::with_name("view")
                         .setting(AppSettings::DisableVersion)
                         .about("View a full identity in human-readable format. Not suitable for sharing, importing, etc.")
+                        .alias("print")
                         .arg(Arg::with_name("SEARCH")
                                 .required(true)
                                 .index(1)
@@ -145,6 +146,7 @@ fn run() -> Result<(), String> {
                 .subcommand(
                     SubCommand::with_name("new")
                         .about("Create a new claim that contains information anybody can view. This is good for things like your name or email.")
+                        .alias("add")
                         .setting(AppSettings::DisableVersion)
                         .setting(AppSettings::SubcommandRequiredElseHelp)
                         .subcommand(
@@ -196,7 +198,7 @@ fn run() -> Result<(), String> {
                                 .arg(Arg::with_name("TYPE")
                                         .required(true)
                                         .index(1)
-                                        .possible_values(&["family", "friend", "org"])
+                                        .possible_values(&["org"])
                                         .help("The relationship type."))
                                 .arg(Arg::with_name("private")
                                         .short("p")
@@ -235,6 +237,7 @@ fn run() -> Result<(), String> {
                 .subcommand(
                     SubCommand::with_name("new")
                         .setting(AppSettings::DisableVersion)
+                        .alias("stamp")
                         .about("Stamp a claim. This is a signal of trust between one identity and another.")
                         .arg(id_arg("The ID of the identity we are stamping from. This must be one of your owned identities. This overrides the configured default identity."))
                         .arg(Arg::with_name("CLAIM")
@@ -342,6 +345,30 @@ fn run() -> Result<(), String> {
                         .about("Change the master passphrase for the private keys in an identity.")
                         // off in whose camper they were whacking
                         .arg(id_arg("The ID of the identity we want to change the password for."))
+                )
+        )
+        .subcommand(
+            SubCommand::with_name("message")
+                .about("Allows manipulation of the local configuration.")
+                .alias("msg")
+                .setting(AppSettings::DisableVersion)
+                .setting(AppSettings::SubcommandRequiredElseHelp)
+                .subcommand(
+                    SubCommand::with_name("send")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Send a message to another identity. This message will be signed with a `crypto` key of your choosing (in your keychain) which will allow th recipient to verify that the message is in fact from you.")
+                        .arg(Arg::with_name("input")
+                                .short("i")
+                                .takes_value(true)
+                                .help("The input file to read from. You can leave blank or use the value '-' to signify STDIN."))
+                        .arg(Arg::with_name("output")
+                                .short("o")
+                                .takes_value(true)
+                                .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
+                        .arg(Arg::with_name("IDENTITY")
+                                .required(true)
+                                .index(1)
+                                .help("The ID of the identity you are sending a message to."))
                 )
         )
         .subcommand(

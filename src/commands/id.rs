@@ -5,15 +5,15 @@ use crate::{
 };
 use prettytable::Table;
 use stamp_core::{
+    crypto::key::{SecretKey, SignKeypair},
     identity::{Identity, VersionedIdentity, ClaimSpec, PublishedIdentity},
-    key::{SecretKey, SignKeypair},
     private::MaybePrivate,
     util::{Timestamp, Lockable},
 };
 use std::convert::TryFrom;
 
 fn passphrase_note() {
-    util::print_wrapped("To protect your identity from unauthorized changes, enter a long but memorable master passphrase. Choose something personal that is easy for you to remember but hard for someone else to guess.\n\n  Example: my dog butch has a friend named snow\n\nYou can change this later using the `stamp keychain passwd` command.");
+    util::print_wrapped("To protect your identity from unauthorized changes, enter a long but memorable master passphrase. Choose something personal that is easy for you to remember but hard for someone else to guess.\n\n  Example: my dog butch has a friend named snow\n\nYou can change this later using the `stamp keychain passwd` command.\n\n");
 }
 
 fn prompt_claim_name_email(master_key: &SecretKey, id: Identity) -> Result<Identity, String> {
@@ -171,7 +171,8 @@ pub fn import(location: &str) -> Result<(), String> {
 
 pub fn publish(id: &str) -> Result<String, String> {
     let identity = try_load_single_identity(id)?;
-    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", util::id_short(id)), identity.created())?;
+    let id_str = id_str!(identity.id())?;
+    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", util::id_short(&id_str)), identity.created())?;
     let now = Timestamp::now();
     let published = PublishedIdentity::publish(&master_key, now, identity)
         .map_err(|e| format!("Error creating published identity: {:?}", e))?;

@@ -5,6 +5,7 @@ use crate::{
 };
 use prettytable::Table;
 use stamp_core::{
+    crypto::key::SecretKey,
     identity::{
         ClaimSpec,
         ClaimContainer,
@@ -13,7 +14,6 @@ use stamp_core::{
         RelationshipType,
         VersionedIdentity,
     },
-    key::SecretKey,
     private::MaybePrivate,
     util::Timestamp,
 };
@@ -29,7 +29,8 @@ fn prompt_claim_value(prompt: &str) -> Result<String, String> {
 
 fn claim_pre(id: &str, prompt: &str) -> Result<(SecretKey, VersionedIdentity, String), String> {
     let identity = id::try_load_single_identity(id)?;
-    let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", util::id_short(id)), identity.created())?;
+    let id_str = id_str!(identity.id())?;
+    let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", util::id_short(&id_str)), identity.created())?;
     identity.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
     let value = prompt_claim_value(prompt)?;
@@ -102,8 +103,6 @@ pub fn new_relation(id: &str, ty: &str, private: bool) -> Result<(), String> {
     let rel_id = IdentityID::try_from(value.as_str())
         .map_err(|e| format!("Couldn't read id {}: {:?}", value, e))?;
     let reltype = match ty {
-        "family" => RelationshipType::Family,
-        "friend" => RelationshipType::Friend,
         "org" => RelationshipType::OrganizationMember,
         _ => Err(format!("Invalid relationship type: {}", ty))?,
     };
@@ -181,12 +180,10 @@ pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option
                 let rel_str = match relation {
                     MaybePrivate::Public(relationship) => {
                         let ty_str = match relationship.ty() {
-                            RelationshipType::Family => String::from("family"),
-                            RelationshipType::Friend => String::from("friend"),
                             RelationshipType::OrganizationMember => String::from("org"),
                             _ => String::from("<unknown>"),
                         };
-                        let id: &IdentityID = relationship.who();
+                        let id: &IdentityID = relationship.subject();
                         let (id_full, id_short) = id_str_split!(id);
                         format!("{} ({})", if verbose { id_full } else { id_short }, ty_str)
                     }

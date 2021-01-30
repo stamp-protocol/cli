@@ -5,10 +5,10 @@ use crate::{
 };
 use prettytable::Table;
 use stamp_core::{
+    crypto,
     identity::{
         keychain::{Key, Subkey},
     },
-    key,
     private::Private,
 };
 use std::convert::TryFrom;
@@ -20,19 +20,19 @@ pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>) -> Result<(), Str
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
     let key = match ty {
         "sign" => {
-            let new_key = key::SignKeypair::new_ed25519(&master_key)
+            let new_key = crypto::key::SignKeypair::new_ed25519(&master_key)
                 .map_err(|e| format!("Error generating key: {:?}", e))?;
-            Key::Sign(new_key)
+            Key::new_sign(new_key)
         }
         "crypto" => {
-            let new_key = key::CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key)
+            let new_key = crypto::key::CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key)
                 .map_err(|e| format!("Error generating key: {:?}", e))?;
-            Key::Crypto(new_key)
+            Key::new_crypto(new_key)
         }
         "secret" => {
-            let new_key = Private::seal(&master_key, &key::SecretKey::new_xsalsa20poly1305())
+            let new_key = Private::seal(&master_key, &crypto::key::SecretKey::new_xsalsa20poly1305())
                 .map_err(|e| format!("Error generating key: {:?}", e))?;
-            Key::Secret(new_key)
+            Key::new_secret(new_key)
         }
         _ => Err(format!("Invalid key type: {}", ty))?,
     };

@@ -1,6 +1,6 @@
 use dirs;
 use stamp_core::{
-    key::SecretKey,
+    crypto::key::SecretKey,
     util::Lockable,
 };
 use std::fs::File;
@@ -71,7 +71,7 @@ pub(crate) fn passphrase_prompt<T: Into<String>>(prompt: T, now: &stamp_core::ut
     passphrase.mem_lock().map_err(|_| format!("Unable to lock memory for passphrase."))?;
     let salt_bytes = stamp_core::util::hash(format!("{}", now.format("%+")).as_bytes())
         .map_err(|err| format!("Error deriving master key salt: {:?}", err))?;
-    let mut master_key = stamp_core::key::derive_master_key(passphrase.as_bytes(), salt_bytes.as_ref(), 2, 67108864)
+    let mut master_key = stamp_core::crypto::key::derive_master_key(passphrase.as_bytes(), salt_bytes.as_ref(), 2, 67108864)
         .map_err(|err| format!("Problem generating master key: {:?}", err))?;
     master_key.mem_lock()
         .map_err(|_| format!("Unable to lock memory for master key."))?;
@@ -80,7 +80,7 @@ pub(crate) fn passphrase_prompt<T: Into<String>>(prompt: T, now: &stamp_core::ut
 }
 
 pub(crate) fn with_new_passphrase<F, T>(prompt: &str, gen_fn: F, now: Option<stamp_core::util::Timestamp>) -> Result<(T, SecretKey), String>
-    where F: FnOnce(&stamp_core::key::SecretKey, stamp_core::util::Timestamp) -> Result<T, String>,
+    where F: FnOnce(&stamp_core::crypto::key::SecretKey, stamp_core::util::Timestamp) -> Result<T, String>,
 {
     let mut passphrase = dialoguer::Password::new().with_prompt(prompt).interact()
         .map_err(|err| format!("There was an error grabbing your passphrase: {:?}", err))?;
@@ -98,7 +98,7 @@ pub(crate) fn with_new_passphrase<F, T>(prompt: &str, gen_fn: F, now: Option<sta
     let now = now.unwrap_or_else(|| stamp_core::util::Timestamp::now());
     let salt_bytes = stamp_core::util::hash(format!("{}", now.format("%+")).as_bytes())
         .map_err(|err| format!("Error deriving master key salt: {:?}", err))?;
-    let mut master_key = stamp_core::key::derive_master_key(passphrase.as_bytes(), salt_bytes.as_ref(), 2, 67108864)
+    let mut master_key = stamp_core::crypto::key::derive_master_key(passphrase.as_bytes(), salt_bytes.as_ref(), 2, 67108864)
         .map_err(|err| format!("Problem generating master key: {:?}", err))?;
     master_key.mem_lock()
         .map_err(|_| format!("Unable to lock memory for master key."))?;
