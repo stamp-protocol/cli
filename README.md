@@ -7,7 +7,7 @@ This is the command-line interface to the [stamp protocol](https://github.com/st
 Hi, it looks like you're trying to install a distributed cryptographic identity
 system. Would you like help??
 
-First, grab the core and the cli:
+First, install rust 1.48+ and cargo. Then grab the core and the cli and build them:
 
 ```sh
 mkdir stamp
