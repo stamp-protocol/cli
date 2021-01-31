@@ -5,9 +5,9 @@ use crate::{
 };
 use prettytable::Table;
 use stamp_core::{
-    crypto::key::{SecretKey, SignKeypair},
-    identity::{Identity, VersionedIdentity, ClaimSpec, PublishedIdentity},
-    private::MaybePrivate,
+    crypto::key::{SecretKey, SignKeypair, CryptoKeypair},
+    identity::{Key, Identity, VersionedIdentity, ClaimSpec, PublishedIdentity},
+    private::{Private, MaybePrivate},
     util::{Timestamp, Lockable},
 };
 use std::convert::TryFrom;
@@ -47,6 +47,24 @@ pub fn try_load_single_identity(id: &str) -> Result<VersionedIdentity, String> {
     Ok(identities[0].clone())
 }
 
+fn post_create(master_key: &SecretKey, identity: Identity) -> Result<Identity, String> {
+    // ask if they want name/email claims, then add three default subkeys (sign,
+    // crypto, secret) to their keychain.
+    let subkey_sign = SignKeypair::new_ed25519(&master_key)
+        .map_err(|e| format!("Error generating subkey: {:?}", e))?;
+    let subkey_crypto = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key)
+        .map_err(|e| format!("Error generating subkey: {:?}", e))?;
+    let subkey_secret = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305())
+        .map_err(|e| format!("Error generating subkey: {:?}", e))?;
+    prompt_claim_name_email(&master_key, identity)?
+        .add_subkey(master_key, Key::new_sign(subkey_sign), "default:sign", Some("A default key for signing documents or messages."))
+        .map_err(|e| format!("Problem adding key to identity: {:?}", e))?
+        .add_subkey(master_key, Key::new_crypto(subkey_crypto), "default:crypto", Some("A default key for receiving private messages."))
+        .map_err(|e| format!("Problem adding key to identity: {:?}", e))?
+        .add_subkey(master_key, Key::new_secret(subkey_secret), "default:secret", Some("A default key allowing encryption/decryption of personal data."))
+        .map_err(|e| format!("Problem adding key to identity: {:?}", e))
+}
+
 pub(crate) fn create_new() -> Result<(), String> {
     passphrase_note();
     let (identity, mut master_key) = util::with_new_passphrase("Your master passphrase", |master_key, now| {
@@ -58,7 +76,7 @@ pub(crate) fn create_new() -> Result<(), String> {
     let id_str = id_str!(identity.id())?;
     println!("Generated a new identity with the ID {}", id_str);
     println!("");
-    let identity = prompt_claim_name_email(&master_key, identity)?;
+    let identity = post_create(&master_key, identity)?;
     master_key.mem_unlock().map_err(|_| format!("Unable to unlock master key memory."))?;
     db::save_identity(identity)?;
     println!("---\nSuccess!");
@@ -125,7 +143,7 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
         .map_err(|e| format!("Error re-keying alpha keypair: {:?}", e))?;
     let identity = Identity::new_with_alpha_and_id(&master_key, now, alpha_keypair, id)
         .map_err(|err| format!("Failed to create identity: {:?}", err))?;
-    let identity = prompt_claim_name_email(&master_key, identity)?;
+    let identity = post_create(&master_key, identity)?;
     let id_str = id_str!(identity.id())?;
     master_key.mem_unlock().map_err(|_| format!("Unable to unlock master key memory."))?;
     db::save_identity(identity)?;

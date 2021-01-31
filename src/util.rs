@@ -108,6 +108,27 @@ pub(crate) fn with_new_passphrase<F, T>(prompt: &str, gen_fn: F, now: Option<sta
     Ok((res?, master_key))
 }
 
+pub fn read_file(filename: &str) -> Result<Vec<u8>, String> {
+    if filename == "-" {
+        if atty::is(atty::Stream::Stdin) {
+            let mut contents = String::new();
+            let stdin = std::io::stdin();
+            eprintln!("{}", text_wrap("Enter your message and hit enter/return:"));
+            stdin.read_line(&mut contents)
+                .map_err(|e| format!("Problem reading file: {}: {:?}", filename, e))?;
+            Ok(Vec::from(contents.trim_end_matches('\n').trim_end_matches('\r').as_bytes()))
+        } else {
+            let mut contents = Vec::new();
+            let mut stdin = std::io::stdin();
+            stdin.read_to_end(&mut contents)
+                .map_err(|e| format!("Problem reading file: {}: {:?}", filename, e))?;
+            Ok(contents)
+        }
+    } else {
+        load_file(filename)
+    }
+}
+
 pub fn write_file(filename: &str, bytes: &[u8]) -> Result<(), String> {
     if filename == "-" {
         let mut out = std::io::stdout();
@@ -127,11 +148,11 @@ pub fn write_file(filename: &str, bytes: &[u8]) -> Result<(), String> {
 
 pub fn load_file(filename: &str) -> Result<Vec<u8>, String> {
     let file = File::open(filename)
-        .map_err(|e| format!("Unable to open identity file: {}: {:?}", filename, e))?;
+        .map_err(|e| format!("Unable to open file: {}: {:?}", filename, e))?;
     let mut reader = BufReader::new(file);
     let mut contents = Vec::new();
     reader.read_to_end(&mut contents)
-        .map_err(|e| format!("Problem reading identity file: {}: {:?}", filename, e))?;
+        .map_err(|e| format!("Problem reading file: {}: {:?}", filename, e))?;
     Ok(contents)
 }
 
