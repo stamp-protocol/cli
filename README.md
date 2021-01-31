@@ -58,3 +58,9 @@ $ ./stamp help
 This will list all available commands, and allows you to explore what stamp
 can do.
 
+## What's next?
+
+Check out the [Stamp core readme](https://github.com/stamp-protocol/core), which
+gives a lot of background information on how the protocol works and how it can
+be used.
+
