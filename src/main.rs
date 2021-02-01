@@ -386,11 +386,6 @@ fn run() -> Result<(), String> {
                                 .long("key-to")
                                 .takes_value(true)
                                 .help("The ID or name of the `crypto` key in the recipient's keychain that the message will be encrypted with. If you don't specify this, you will be prompted."))
-                        .arg(Arg::with_name("input")
-                                .short("i")
-                                .long("input")
-                                .takes_value(true)
-                                .help("The input file to read the plaintext message from. You can leave blank or use the value '-' to signify STDIN."))
                         .arg(Arg::with_name("output")
                                 .short("o")
                                 .long("output")
@@ -399,12 +394,16 @@ fn run() -> Result<(), String> {
                         .arg(Arg::with_name("base64")
                                 .short("b")
                                 .long("base64")
-                                .help("If set, output the encrypted message as base64 (which is easier to put in email or social media),"))
+                                .help("If set, output the encrypted message as base64 (which is easier to put in email or a website),"))
                         .arg(id_arg("The ID of the identity we want to send from. This overrides the configured default identity."))
                         .arg(Arg::with_name("SEARCH")
                                 .index(1)
                                 .required(true)
                                 .help("Look for the recipient by identity ID, email, name, or nickname"))
+                        .arg(Arg::with_name("MESSAGE")
+                                .index(2)
+                                .required(false)
+                                .help("The input file to read the plaintext message from. You can leave blank or use the value '-' to signify STDIN."))
                 )
                 .subcommand(
                     SubCommand::with_name("send-anonymous")
@@ -415,11 +414,6 @@ fn run() -> Result<(), String> {
                                 .long("key-to")
                                 .takes_value(true)
                                 .help("The ID or name of the `crypto` key in the recipient's keychain that the message will be encrypted with. If you don't specify this, you will be prompted."))
-                        .arg(Arg::with_name("input")
-                                .short("i")
-                                .long("input")
-                                .takes_value(true)
-                                .help("The input file to read the plaintext message from. You can leave blank or use the value '-' to signify STDIN."))
                         .arg(Arg::with_name("output")
                                 .short("o")
                                 .long("output")
@@ -428,11 +422,15 @@ fn run() -> Result<(), String> {
                         .arg(Arg::with_name("base64")
                                 .short("b")
                                 .long("base64")
-                                .help("If set, output the encrypted message as base64 (which is easier to put in email or social media),"))
+                                .help("If set, output the encrypted message as base64 (which is easier to put in email or a website),"))
                         .arg(Arg::with_name("SEARCH")
                                 .index(1)
                                 .required(true)
                                 .help("Look for the recipient by identity ID, email, name, or nickname"))
+                        .arg(Arg::with_name("MESSAGE")
+                                .index(2)
+                                .required(false)
+                                .help("The input file to read the plaintext message from. You can leave blank or use the value '-' to signify STDIN."))
                 )
                 .subcommand(
                     SubCommand::with_name("open")
@@ -443,17 +441,64 @@ fn run() -> Result<(), String> {
                                 .long("key-open")
                                 .takes_value(true)
                                 .help("The ID or name of the `crypto` key in your keychain that the message will be opened with. If you don't specify this, you will be prompted."))
-                        .arg(Arg::with_name("input")
-                                .short("i")
-                                .long("input")
-                                .takes_value(true)
-                                .help("The input file to read the encrypted message from. You can leave blank or use the value '-' to signify STDIN."))
                         .arg(Arg::with_name("output")
                                 .short("o")
                                 .long("output")
                                 .takes_value(true)
                                 .help("The output file to write the plaintext message to. You can leave blank or use the value '-' to signify STDOUT."))
                         .arg(id_arg("The ID of the identity the message was sent to. This overrides the configured default identity."))
+                        .arg(Arg::with_name("ENCRYPTED")
+                                .index(1)
+                                .required(false)
+                                .help("The input file to read the encrypted message from. You can leave blank or use the value '-' to signify STDIN."))
+                )
+        )
+        .subcommand(
+            SubCommand::with_name("signature")
+                .about("Sign an verify messages and documents")
+                .alias("sign")
+                .setting(AppSettings::DisableVersion)
+                .setting(AppSettings::SubcommandRequiredElseHelp)
+                .subcommand(
+                    SubCommand::with_name("sign")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Sign a message or document with one of your `sign` keys. This signature can only be created with your private signing key, but anybody who has your public key can verify the message is unaltered.")
+                        .arg(Arg::with_name("key-sign")
+                                .short("k")
+                                .long("key-sign")
+                                .takes_value(true)
+                                .help("The ID or name of the `sign` key you wish to sign with. If you don't specify this, you will be prompted."))
+                        .arg(Arg::with_name("output")
+                                .short("o")
+                                .long("output")
+                                .takes_value(true)
+                                .help("The output file to write the signature to. You can leave blank or use the value '-' to signify STDOUT."))
+                        .arg(Arg::with_name("attached")
+                                .short("a")
+                                .long("attached")
+                                .help("If set, the message body will be appended to the signature. This allows you to send a message and the signature of that message together. The default is to generate a detached signature that much be published alongside the message."))
+                        .arg(Arg::with_name("base64")
+                                .short("b")
+                                .long("base64")
+                                .help("If set, output the signature as base64 (which is easier to put in email or a website),"))
+                        .arg(id_arg("The ID of the identity we want to sign from. This overrides the configured default identity."))
+                        .arg(Arg::with_name("MESSAGE")
+                                .index(1)
+                                .required(false)
+                                .help("The input file to read the plaintext message from. You can leave blank or use the value '-' to signify STDIN."))
+                )
+                .subcommand(
+                    SubCommand::with_name("verify")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Verify a signature using the signing identity's public key. This requires having the signing identity imported.")
+                        .arg(Arg::with_name("SIGNATURE")
+                                .index(1)
+                                .required(true)
+                                .help("The input file to read the signature from. If the signature is deattached, you will also need to spcify the MESSAGE argument. You can leave blank or use the value '-' to signify STDIN."))
+                        .arg(Arg::with_name("MESSAGE")
+                                .index(2)
+                                .required(false)
+                                .help("The input file to read the plaintext message from. You can leave blank or use the value '-' to signify STDIN."))
                 )
         )
         .subcommand(
@@ -667,28 +712,47 @@ fn run() -> Result<(), String> {
                     let from_id = id_val(args)?;
                     let key_from_search = args.value_of("key-from");
                     let key_to_search = args.value_of("key-to");
-                    let input = args.value_of("input").unwrap_or("-");
                     let output = args.value_of("output").unwrap_or("-");
                     let search = args.value_of("SEARCH")
                         .ok_or(format!("Must specify a search value"))?;
+                    let input = args.value_of("MESSAGE").unwrap_or("-");
                     let base64 = args.is_present("base64");
                     commands::message::send(&from_id, key_from_search, key_to_search, input, output, search, base64)?;
                 }
                 ("send-anonymous", Some(args)) => {
                     let key_to_search = args.value_of("key-to");
-                    let input = args.value_of("input").unwrap_or("-");
                     let output = args.value_of("output").unwrap_or("-");
                     let search = args.value_of("SEARCH")
                         .ok_or(format!("Must specify a search value"))?;
+                    let input = args.value_of("MESSAGE").unwrap_or("-");
                     let base64 = args.is_present("base64");
                     commands::message::send_anonymous(key_to_search, input, output, search, base64)?;
                 }
                 ("open", Some(args)) => {
                     let to_id = id_val(args)?;
                     let key_open = args.value_of("key-open");
-                    let input = args.value_of("input").unwrap_or("-");
                     let output = args.value_of("output").unwrap_or("-");
+                    let input = args.value_of("ENCRYPTED").unwrap_or("-");
                     commands::message::open(&to_id, key_open, input, output)?;
+                }
+                _ => println!("{}", args.usage()),
+            }
+        }
+        ("signature", Some(args)) => {
+            match args.subcommand() {
+                ("sign", Some(args)) => {
+                    let sign_id = id_val(args)?;
+                    let key_sign_search = args.value_of("key-sign");
+                    let output = args.value_of("output").unwrap_or("-");
+                    let input = args.value_of("MESSAGE").unwrap_or("-");
+                    let attached = args.is_present("attached");
+                    let base64 = args.is_present("base64");
+                    commands::sign::sign(&sign_id, key_sign_search, input, output, attached, base64)?;
+                }
+                ("verify", Some(args)) => {
+                    let signature = args.value_of("SIGNATURE").unwrap_or("-");
+                    let input = args.value_of("MESSAGE");
+                    commands::sign::verify(signature, input)?;
                 }
                 _ => println!("{}", args.usage()),
             }

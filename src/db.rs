@@ -7,6 +7,7 @@ use stamp_core::{
         IdentityID,
         VersionedIdentity,
     },
+    util::SerdeBinary,
 };
 use std::convert::TryFrom;
 

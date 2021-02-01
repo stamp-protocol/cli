@@ -5,7 +5,7 @@ use crate::{
 };
 use stamp_core::{
     crypto::message::{self, Message},
-    util::{base64_encode, base64_decode},
+    util::{base64_encode, base64_decode, SerdeBinary},
 };
 use std::convert::TryFrom;
 
@@ -29,6 +29,7 @@ pub fn send(id_from: &str, key_search_from: Option<&str>, key_search_to: Option<
         .map_err(|e| format!("Incorrect passphrase: {}", e))?;
     let sealed = message::send(&master_key_from, identity_from.id(), &key_from, &key_to, msg_bytes.as_slice())
         .map_err(|e| format!("Problem sealing the message: {}", e))?;
+    println!("sealed: {:?}", sealed);
     let serialized = sealed.serialize_binary()
         .map_err(|e| format!("Problem serializing the sealed message: {}", e))?;
     if base64 {
@@ -100,15 +101,6 @@ pub fn open(id_to: &str, key_search_open: Option<&str>, input: &str, output: &st
                 { master_key_to, key_to, bytes }
                 message::open(&master_key_to, &key_to, &key_from, &sealed_message)
             }
-            /*
-            let key_to = keychain::find_keys_by_search_or_prompt(&identity_to, key_search_open, "crypto", |sub| sub.key().as_cryptokey())?;
-            let id_str = id_str!(identity_to.id())?;
-            let master_key_to = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", util::id_short(&id_str)), identity_to.created())?;
-            identity_to.test_master_key(&master_key_to)
-                .map_err(|e| format!("Incorrect passphrase: {}", e))?;
-            message::open(&master_key_to, &key_to, &key_from, &sealed_message)
-                .map_err(|e| format!("Problem opening message: {}", e))?
-            */
         }
     };
     util::write_file(output, opened.as_slice())?;

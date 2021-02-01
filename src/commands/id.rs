@@ -8,7 +8,7 @@ use stamp_core::{
     crypto::key::{SecretKey, SignKeypair, CryptoKeypair},
     identity::{Key, Identity, VersionedIdentity, ClaimSpec, PublishedIdentity},
     private::{Private, MaybePrivate},
-    util::{Timestamp, Lockable},
+    util::{Timestamp, Lockable, SerdeBinary},
 };
 use std::convert::TryFrom;
 
