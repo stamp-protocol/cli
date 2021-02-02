@@ -47,7 +47,7 @@ pub fn try_load_single_identity(id: &str) -> Result<VersionedIdentity, String> {
     Ok(identities[0].clone())
 }
 
-fn post_create(master_key: &SecretKey, identity: Identity) -> Result<Identity, String> {
+fn post_create(master_key: &SecretKey, identity: Identity) -> Result<(), String> {
     // ask if they want name/email claims, then add three default subkeys (sign,
     // crypto, secret) to their keychain.
     let subkey_sign = SignKeypair::new_ed25519(&master_key)
@@ -56,13 +56,27 @@ fn post_create(master_key: &SecretKey, identity: Identity) -> Result<Identity, S
         .map_err(|e| format!("Error generating subkey: {:?}", e))?;
     let subkey_secret = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305())
         .map_err(|e| format!("Error generating subkey: {:?}", e))?;
-    prompt_claim_name_email(&master_key, identity)?
+    let identity = prompt_claim_name_email(&master_key, identity)?
         .add_subkey(master_key, Key::new_sign(subkey_sign), "default:sign", Some("A default key for signing documents or messages."))
         .map_err(|e| format!("Problem adding key to identity: {:?}", e))?
         .add_subkey(master_key, Key::new_crypto(subkey_crypto), "default:crypto", Some("A default key for receiving private messages."))
         .map_err(|e| format!("Problem adding key to identity: {:?}", e))?
         .add_subkey(master_key, Key::new_secret(subkey_secret), "default:secret", Some("A default key allowing encryption/decryption of personal data."))
-        .map_err(|e| format!("Problem adding key to identity: {:?}", e))
+        .map_err(|e| format!("Problem adding key to identity: {:?}", e))?;
+    let id_str = id_str!(identity.id())?;
+    db::save_identity(identity)?;
+    let green = dialoguer::console::Style::new().green();
+    let bold = dialoguer::console::Style::new().bold();
+    println!("---\n{} The identity {} has been saved.", green.apply_to("Success!"), util::id_short(&id_str));
+    let mut conf = config::load()?;
+    if conf.default_identity.is_none() {
+        println!("Marking identity as default.");
+        conf.default_identity = Some(id_str);
+        config::save(&conf)?;
+    }
+    let msg = format!("\n{} It's a good idea to either store your master passphrase in a password manager or use the `{}` command to create a backup file that will let you access your identity in the event you lose your master passphrase.\n", bold.apply_to("If you lose your master passphrase, you will be locked out of your identity."), green.apply_to("stamp keychain keyfile"));
+    util::print_wrapped(&msg);
+    Ok(())
 }
 
 pub(crate) fn create_new() -> Result<(), String> {
@@ -76,15 +90,7 @@ pub(crate) fn create_new() -> Result<(), String> {
     let id_str = id_str!(identity.id())?;
     println!("Generated a new identity with the ID {}", id_str);
     println!("");
-    let identity = post_create(&master_key, identity)?;
-    db::save_identity(identity)?;
-    println!("---\nSuccess!");
-    let mut conf = config::load()?;
-    if conf.default_identity.is_none() {
-        println!("Marking identity as default.");
-        conf.default_identity = Some(id_str);
-        config::save(&conf)?;
-    }
+    post_create(&master_key, identity)?;
     Ok(())
 }
 
@@ -142,16 +148,7 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
         .map_err(|e| format!("Error re-keying alpha keypair: {:?}", e))?;
     let identity = Identity::new_with_alpha_and_id(&master_key, now, alpha_keypair, id)
         .map_err(|err| format!("Failed to create identity: {:?}", err))?;
-    let identity = post_create(&master_key, identity)?;
-    let id_str = id_str!(identity.id())?;
-    db::save_identity(identity)?;
-    println!("---\nSuccess!");
-    let mut conf = config::load()?;
-    if conf.default_identity.is_none() {
-        println!("Marking identity as default.");
-        conf.default_identity = Some(id_str);
-        config::save(&conf)?;
-    }
+    post_create(&master_key, identity)?;
     Ok(())
 }
 
