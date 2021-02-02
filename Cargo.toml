@@ -16,6 +16,7 @@ regex = "1.4"
 rusqlite = { version = "0.24", features = ["bundled"] }
 serde = "1.0"
 serde_derive = "1.0"
+sharks = "0.4"
 stamp-core = { path = "../core" }
 textwrap = { version = "0.13", features = ["terminal_size"] }
 toml = "0.5"

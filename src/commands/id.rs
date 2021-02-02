@@ -8,7 +8,7 @@ use stamp_core::{
     crypto::key::{SecretKey, SignKeypair, CryptoKeypair},
     identity::{Key, Identity, VersionedIdentity, ClaimSpec, PublishedIdentity},
     private::{Private, MaybePrivate},
-    util::{Timestamp, Lockable, SerdeBinary},
+    util::{Timestamp, SerdeBinary},
 };
 use std::convert::TryFrom;
 
@@ -67,7 +67,7 @@ fn post_create(master_key: &SecretKey, identity: Identity) -> Result<Identity, S
 
 pub(crate) fn create_new() -> Result<(), String> {
     passphrase_note();
-    let (identity, mut master_key) = util::with_new_passphrase("Your master passphrase", |master_key, now| {
+    let (identity, master_key) = util::with_new_passphrase("Your master passphrase", |master_key, now| {
         let identity = Identity::new(master_key, now)
             .map_err(|err| format!("Failed to create identity: {:?}", err))?;
         Ok(identity)
@@ -77,7 +77,6 @@ pub(crate) fn create_new() -> Result<(), String> {
     println!("Generated a new identity with the ID {}", id_str);
     println!("");
     let identity = post_create(&master_key, identity)?;
-    master_key.mem_unlock().map_err(|_| format!("Unable to unlock master key memory."))?;
     db::save_identity(identity)?;
     println!("---\nSuccess!");
     let mut conf = config::load()?;
@@ -138,14 +137,13 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
     }
 
     passphrase_note();
-    let (_, mut master_key) = util::with_new_passphrase("Your master passphrase", |_master_key, _now| { Ok(()) }, Some(now.clone()))?;
+    let (_, master_key) = util::with_new_passphrase("Your master passphrase", |_master_key, _now| { Ok(()) }, Some(now.clone()))?;
     let alpha_keypair = alpha_keypair.reencrypt(&tmp_master_key, &master_key)
         .map_err(|e| format!("Error re-keying alpha keypair: {:?}", e))?;
     let identity = Identity::new_with_alpha_and_id(&master_key, now, alpha_keypair, id)
         .map_err(|err| format!("Failed to create identity: {:?}", err))?;
     let identity = post_create(&master_key, identity)?;
     let id_str = id_str!(identity.id())?;
-    master_key.mem_unlock().map_err(|_| format!("Unable to unlock master key memory."))?;
     db::save_identity(identity)?;
     println!("---\nSuccess!");
     let mut conf = config::load()?;
@@ -218,10 +216,12 @@ pub fn delete(search: &str, skip_confirm: bool, verbose: bool) -> Result<(), Str
             return Ok(());
         }
     }
+    let id_len = identities.len();
     for identity in identities {
         let id = id_str!(identity.id())?;
         db::delete_identity(&id)?;
     }
+    println!("Deleted {} identities", id_len);
     Ok(())
 }
 

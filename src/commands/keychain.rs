@@ -5,12 +5,13 @@ use crate::{
 };
 use prettytable::Table;
 use stamp_core::{
-    crypto,
+    crypto::{self, key::SecretKey},
     identity::{
         VersionedIdentity,
         keychain::{Key, Subkey},
     },
     private::Private,
+    util::{base64_encode, base64_decode},
 };
 use std::convert::TryFrom;
 
@@ -114,7 +115,7 @@ pub fn delete(id: &str, search: &str) -> Result<(), String> {
     let identity_mod = identity.delete_subkey(&master_key, key.id())
         .map_err(|e| format!("Problem deleting subkey from keychain: {:?}", e))?;
     db::save_identity(identity_mod)?;
-    println!("Key {} removed from identity {}", util::id_short(&key_id), util::id_short(&id_str));
+    println!("Key {} removed.", util::id_short(&key_id));
     Ok(())
 }
 
@@ -142,26 +143,99 @@ pub fn revoke(id: &str, search: &str) -> Result<(), String> {
     let identity_mod = identity.delete_subkey(&master_key, key.id())
         .map_err(|e| format!("Problem deleting subkey from keychain: {:?}", e))?;
     db::save_identity(identity_mod)?;
-    println!("Key {} removed from identity {}", util::id_short(&key_id), util::id_short(&id_str));
+    println!("Key {} revoked.", util::id_short(&key_id));
     Ok(())
 }
 
-pub fn passwd(id: &str) -> Result<(), String> {
+pub fn passwd(id: &str, keyfile: Option<&str>, keyparts: Vec<&str>) -> Result<(), String> {
     let identity = id::try_load_single_identity(id)?;
-    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", util::id_short(id)), identity.created())?;
-    identity.test_master_key(&master_key)
-        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+    fn master_key_from_base64_shamir_parts(parts: &Vec<&str>) -> Result<SecretKey, String> {
+        let keyfile_parts = parts.iter()
+            .map(|part| {
+                base64_decode(part.trim()).map_err(|e| format!("Problem reading key part: {:?}", e))
+            })
+            .map(|part| {
+                part.and_then(|x| {
+                    sharks::Share::try_from(x.as_slice())
+                        .map_err(|e| format!("Problem deserializing key part: {:?}", e))
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let mut key_bytes = None;
+        for min_shares in (0..keyfile_parts.len()).rev() {
+            let sharks = sharks::Sharks(min_shares as u8);
+            match sharks.recover(keyfile_parts.as_slice()) {
+                Ok(bytes) => {
+                    key_bytes = Some(bytes);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let key_bytes = key_bytes.ok_or(format!("Could not reconstruct master key."))?;
+        let master_key = crypto::key::SecretKey::new_xsalsa20poly1305_from_slice(key_bytes.as_slice())
+            .map_err(|e| format!("Problem creating master key: {}", e))?;
+        Ok(master_key)
+    }
+
+    let master_key = if let Some(keyfile) = keyfile {
+        let keyfile_contents = util::read_file(keyfile)?;
+        let keyfile_string = String::from_utf8(keyfile_contents)
+            .map_err(|_| format!("Invalid keyfile format."))?;
+        let keyfile_parts = keyfile_string.split("\n").collect::<Vec<_>>();
+        let master_key = master_key_from_base64_shamir_parts(&keyfile_parts)?;
+        identity.test_master_key(&master_key)
+            .map_err(|e| format!("Incorrect master key: {}", e))?;
+        util::print_wrapped("Successfully recovered master key from keyfile!\n");
+        master_key
+    } else if keyparts.len() > 0 {
+        let master_key = master_key_from_base64_shamir_parts(&keyparts)?;
+        identity.test_master_key(&master_key)
+            .map_err(|e| format!("Incorrect master key: {}", e))?;
+        util::print_wrapped("Successfully recovered master key from key parts!\n");
+        master_key
+    } else {
+        let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", util::id_short(id)), identity.created())?;
+        identity.test_master_key(&master_key)
+            .map_err(|e| format!("Incorrect passphrase: {}", e))?;
+        master_key
+    };
     let (_, new_master_key) = util::with_new_passphrase("Your new master passphrase", |_master_key, _now| { Ok(()) }, Some(identity.created().clone()))?;
     let identity_reencrypted = identity.reencrypt(&master_key, &new_master_key)
-        .map_err(|e| format!("Password change failed: {:?}", e))?;
+        .map_err(|e| format!("Password change failed: {}", e))?;
     // make sure it actually works before we save it...
     identity_reencrypted.test_master_key(&new_master_key)
-        .map_err(|e| format!("Password change failed: {:?}", e))?;
+        .map_err(|e| format!("Password change failed: {}", e))?;
     identity_reencrypted.verify()
-        .map_err(|e| format!("Identity verification failed: {:?}", e))?;
+        .map_err(|e| format!("Identity verification failed: {}", e))?;
     db::save_identity(identity_reencrypted)?;
     println!("Identity re-encrypted with new passphrase!");
     Ok(())
+}
+
+pub fn keyfile(id: &str, shamir: &str, output: &str) -> Result<(), String> {
+    let mut shamir_parts = shamir.split("/");
+    let min_shares: u8 = shamir_parts.next()
+        .ok_or(format!("Invalid shamir format (must be \"M/S\")"))?
+        .parse()
+        .map_err(|_| format!("Invalid shamir format (must be \"M/S\")"))?;
+    let num_shares: u8 = shamir_parts.next()
+        .ok_or(format!("Invalid shamir format (must be \"M/S\")"))?
+        .parse()
+        .map_err(|_| format!("Invalid shamir format (must be \"M/S\")"))?;
+    if min_shares > num_shares {
+        Err(format!("Shamir minimum shares (M) must be equal or lesser to total shares (S)"))?;
+    }
+    let identity = id::try_load_single_identity(id)?;
+    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", util::id_short(id)), identity.created())?;
+    identity.test_master_key(&master_key)
+        .map_err(|e| format!("Incorrect passphrase: {}", e))?;
+    let sharks = sharks::Sharks(min_shares);
+    let dealer = sharks.dealer(master_key.as_ref());
+    let shares: Vec<String> = dealer.take(num_shares as usize)
+        .map(|x| base64_encode(Vec::from(&x).as_slice()))
+        .collect::<Vec<_>>();
+    util::write_file(output, shares.join("\n").as_bytes())
 }
 
 pub fn print_keys_table(keys: &Vec<&Subkey>, verbose: bool, choice: bool) {

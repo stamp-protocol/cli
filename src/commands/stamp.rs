@@ -83,6 +83,7 @@ pub fn accept(our_identity_id: &str, location: &str) -> Result<(), String> {
     let our_identity_mod = our_identity.accept_stamp(&master_key, Timestamp::now(), &their_identity, stamp)
         .map_err(|e| format!("Error accepting stamp: {:?}", e))?;
     db::save_identity(our_identity_mod)?;
+    println!("Stamp {} accepted!", util::id_short(&stamp_id_str));
     Ok(())
 }
 

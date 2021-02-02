@@ -34,7 +34,7 @@ fn run() -> Result<(), String> {
         .bin_name("stamp")
         .max_term_width(util::term_maxwidth())
         .about("A command line interface to the Stamp identity protocol.")
-        .after_help("EXAMPLES:\n    stamp id new\n        Create a new identity\n    stamp id list\n        List all local identities\n    stamp keychain passwd\n        Change the password for your default identity")
+        .after_help("EXAMPLES:\n    stamp id new\n        Create a new identity\n    stamp id list\n        List all local identities\n    stamp keychain passwd\n        Change the passphrase for your default identity")
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .global_setting(AppSettings::VersionlessSubcommands)
         .global_setting(AppSettings::InferSubcommands)
@@ -172,6 +172,20 @@ fn run() -> Result<(), String> {
                                         .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                         )
                         .subcommand(
+                            SubCommand::with_name("photo")
+                                .about("Claim that a photo is you.")
+                                .setting(AppSettings::DisableVersion)
+                                .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
+                                .arg(Arg::with_name("private")
+                                        .short("p")
+                                        .long("private")
+                                        .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
+                                .arg(Arg::with_name("PHOTO")
+                                        .index(1)
+                                        .required(true)
+                                        .help("The input file to read the photo from. You can leave blank or use the value '-' to signify STDIN."))
+                        )
+                        .subcommand(
                             SubCommand::with_name("email")
                                 .about("Claim ownership of an email address.")
                                 .setting(AppSettings::DisableVersion)
@@ -215,6 +229,35 @@ fn run() -> Result<(), String> {
                                         .long("private")
                                         .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                         )
+                )
+                .subcommand(
+                    SubCommand::with_name("req")
+                        .about("Create a stamp request. This is is generally needed when you want to have another identity stamp a private claim, in which case the claim is decrypted with your master key, then encrypted via the recipient's public key so only they can open it. You can also send stamp requests for public claims as well.")
+                        .setting(AppSettings::DisableVersion)
+                        .arg(Arg::with_name("key-from")
+                                .short("f")
+                                .long("key-from")
+                                .takes_value(true)
+                                .help("The ID or name of the `crypto` key in your keychain you want to sign the message with. If you don't specify this, you will be prompted."))
+                        .arg(Arg::with_name("key-to")
+                                .short("t")
+                                .long("key-to")
+                                .takes_value(true)
+                                .help("The ID or name of the `crypto` key in the recipient's keychain that the message will be encrypted with. If you don't specify this, you will be prompted."))
+                        .arg(Arg::with_name("output")
+                                .short("o")
+                                .long("output")
+                                .takes_value(true)
+                                .help("The output file to write the encrypted message to. You can leave blank or use the value '-' to signify STDOUT."))
+                        .arg(Arg::with_name("base64")
+                                .short("b")
+                                .long("base64")
+                                .help("If set, output the encrypted message as base64 (which is easier to put in email or a website),"))
+                        .arg(id_arg("The ID of the identity we are creating the stamp request for. This overrides the configured default identity."))
+                        .arg(Arg::with_name("CLAIM")
+                                .index(1)
+                                .required(true)
+                                .help("The ID of the claim we want to request a stamp on."))
                 )
                 .subcommand(
                     SubCommand::with_name("list")
@@ -310,7 +353,7 @@ fn run() -> Result<(), String> {
                         .about("Create a new subkey and add it to your keychain.")
                         .alias("add")
                         .setting(AppSettings::DisableVersion)
-                        .arg(id_arg("The ID of the identity we want to change the password for. This overrides the configured default identity."))
+                        .arg(id_arg("The ID of the identity we want to add a key to. This overrides the configured default identity."))
                         .arg(Arg::with_name("TYPE")
                                 .required(true)
                                 .index(1)
@@ -362,8 +405,34 @@ fn run() -> Result<(), String> {
                     SubCommand::with_name("passwd")
                         .setting(AppSettings::DisableVersion)
                         .about("Change the master passphrase for the private keys in an identity.")
+                        .arg(Arg::with_name("keyfile")
+                                .short("k")
+                                .long("keyfile")
+                                .takes_value(true)
+                                .help("If you generated a keyfile via `stamp keychain keyfile` you can pass it here. This lets you recover your identity even if you lost your master passphrase."))
+                        .arg(Arg::with_name("KEYPARTS")
+                                .index(1)
+                                .multiple(true)
+                                .required(false)
+                                .help("If instead of a keyfile you have individual parts of your master key (generated with `stamp keychain keyfile`), you can enter them here as separate arguments to recover your identity even if you lost your master passphrase."))
                         // off in whose camper they were whacking
-                        .arg(id_arg("The ID of the identity we want to change the password for. This overrides the configured default identity."))
+                        .arg(id_arg("The ID of the identity we want to change the master passphrase for. This overrides the configured default identity."))
+                )
+                .subcommand(
+                    SubCommand::with_name("keyfile")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Back up your master key such that it can be used with the `stamp keychain passwd` command to recover your identity in the event you lose your master passphrase. This command has the ability to use Shamir's algorithm so you can split your master key into multiple parts, each of which can be saved to different location (or given to different people). Later, you can recover your master key if you have some minimum number of these parts. If you elect to use Shamir's, each key part will be output on its own line.")
+                        .arg(Arg::with_name("shamir")
+                                .short("s")
+                                .long("shamir")
+                                .takes_value(true)
+                                .help("A value in the format M/S (eg 3/5) that splits the key into S parts and requires at least M parts to recover the key (Default: 1/1)"))
+                        .arg(Arg::with_name("output")
+                                .short("o")
+                                .long("output")
+                                .takes_value(true)
+                                .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
+                        .arg(id_arg("The ID of the identity we want to backup the master key for. This overrides the configured default identity."))
                 )
         )
         .subcommand(
@@ -611,6 +680,13 @@ fn run() -> Result<(), String> {
                             let private = args.is_present("private");
                             commands::claim::new_email(&id, private)?;
                         }
+                        ("photo", Some(args)) => {
+                            let id = id_val(args)?;
+                            let private = args.is_present("private");
+                            let photo = args.value_of("PHOTO")
+                                .ok_or(format!("Must specify a photo"))?;
+                            commands::claim::new_photo(&id, photo, private)?;
+                        }
                         ("pgp", Some(args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
@@ -629,6 +705,10 @@ fn run() -> Result<(), String> {
                         }
                         _ => println!("{}", args.usage()),
                     }
+                }
+                ("req", Some(args)) => {
+                    drop(args);
+                    unimplemented!();
                 }
                 ("list", Some(args)) => {
                     let id = id_val(args)?;
@@ -666,6 +746,7 @@ fn run() -> Result<(), String> {
                 }
                 ("revoke", Some(args)) => {
                     drop(args);
+                    unimplemented!();
                 }
                 _ => println!("{}", args.usage()),
             }
@@ -701,7 +782,18 @@ fn run() -> Result<(), String> {
                 }
                 ("passwd", Some(args)) => {
                     let id = id_val(args)?;
-                    commands::keychain::passwd(&id)?;
+                    let keyfile = args.value_of("keyfile");
+                    let keyparts: Vec<&str> = match args.values_of("KEYPARTS") {
+                        Some(iter) => iter.collect(),
+                        None => vec![],
+                    };
+                    commands::keychain::passwd(&id, keyfile, keyparts)?;
+                }
+                ("keyfile", Some(args)) => {
+                    let id = id_val(args)?;
+                    let shamir = args.value_of("shamir").unwrap_or("1/1");
+                    let output = args.value_of("output").unwrap_or("-");
+                    commands::keychain::keyfile(&id, shamir, output)?;
                 }
                 _ => println!("{}", args.usage()),
             }
