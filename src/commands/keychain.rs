@@ -241,10 +241,11 @@ pub fn keyfile(id: &str, shamir: &str, output: &str) -> Result<(), String> {
 pub fn print_keys_table(keys: &Vec<&Subkey>, verbose: bool, choice: bool) {
     let mut table = Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    let id_field = if verbose { "ID" } else { "ID (short)" };
     if choice {
-        table.set_titles(row!["Choose", "ID", "Type", "Name", "Description", "Full"]);
+        table.set_titles(row!["Choose", id_field, "Type", "Name", "Description", "Full"]);
     } else {
-        table.set_titles(row!["ID", "Type", "Name", "Description", "Full"]);
+        table.set_titles(row![id_field, "Type", "Name", "Description", "Full"]);
     }
     let mut idx = 0;
     for key in keys {

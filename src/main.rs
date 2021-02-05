@@ -231,33 +231,20 @@ fn run() -> Result<(), String> {
                         )
                 )
                 .subcommand(
-                    SubCommand::with_name("req")
-                        .about("Create a stamp request. This is is generally needed when you want to have another identity stamp a private claim, in which case the claim is decrypted with your master key, then encrypted via the recipient's public key so only they can open it. You can also send stamp requests for public claims as well.")
+                    SubCommand::with_name("view")
+                        .about("View the data in a claim. If the claim is private, you will be prompted for your master password. If the claim is not owned by you, an error is thrown.")
                         .setting(AppSettings::DisableVersion)
-                        .arg(Arg::with_name("key-from")
-                                .short("f")
-                                .long("key-from")
-                                .takes_value(true)
-                                .help("The ID or name of the `crypto` key in your keychain you want to sign the message with. If you don't specify this, you will be prompted."))
-                        .arg(Arg::with_name("key-to")
-                                .short("t")
-                                .long("key-to")
-                                .takes_value(true)
-                                .help("The ID or name of the `crypto` key in the recipient's keychain that the message will be encrypted with. If you don't specify this, you will be prompted."))
+                        .arg(id_arg("The ID of the identity we are viewing the claim for. This overrides the configured default identity."))
                         .arg(Arg::with_name("output")
                                 .short("o")
                                 .long("output")
                                 .takes_value(true)
-                                .help("The output file to write the encrypted message to. You can leave blank or use the value '-' to signify STDOUT."))
-                        .arg(Arg::with_name("base64")
-                                .short("b")
-                                .long("base64")
-                                .help("If set, output the encrypted message as base64 (which is easier to put in email or a website),"))
-                        .arg(id_arg("The ID of the identity we are creating the stamp request for. This overrides the configured default identity."))
+                                .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
                         .arg(Arg::with_name("CLAIM")
-                                .index(1)
                                 .required(true)
-                                .help("The ID of the claim we want to request a stamp on."))
+                                .index(1)
+                                // you gandered, sir.
+                                .help("The ID of the claim we're gandering."))
                 )
                 .subcommand(
                     SubCommand::with_name("list")
@@ -305,6 +292,35 @@ fn run() -> Result<(), String> {
                                 .long("output")
                                 .takes_value(true)
                                 .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
+                )
+                .subcommand(
+                    SubCommand::with_name("req")
+                        .about("Create a stamp request. This is is generally needed when you want to have another identity stamp a private claim, in which case the claim is decrypted with your master key, then encrypted via the recipient's public key so only they can open it. You can also send stamp requests for public claims as well.")
+                        .setting(AppSettings::DisableVersion)
+                        .arg(Arg::with_name("key-from")
+                                .short("f")
+                                .long("key-from")
+                                .takes_value(true)
+                                .help("The ID or name of the `crypto` key in your keychain you want to sign the message with. If you don't specify this, you will be prompted."))
+                        .arg(Arg::with_name("key-to")
+                                .short("t")
+                                .long("key-to")
+                                .takes_value(true)
+                                .help("The ID or name of the `crypto` key in the recipient's keychain that the message will be encrypted with. If you don't specify this, you will be prompted."))
+                        .arg(Arg::with_name("output")
+                                .short("o")
+                                .long("output")
+                                .takes_value(true)
+                                .help("The output file to write the encrypted message to. You can leave blank or use the value '-' to signify STDOUT."))
+                        .arg(Arg::with_name("base64")
+                                .short("b")
+                                .long("base64")
+                                .help("If set, output the encrypted message as base64 (which is easier to put in email or a website),"))
+                        .arg(id_arg("The ID of the identity we are creating the stamp request for. This overrides the configured default identity."))
+                        .arg(Arg::with_name("CLAIM")
+                                .index(1)
+                                .required(true)
+                                .help("The ID of the claim we want to request a stamp on."))
                 )
                 .subcommand(
                     SubCommand::with_name("list")
@@ -706,9 +722,12 @@ fn run() -> Result<(), String> {
                         _ => println!("{}", args.usage()),
                     }
                 }
-                ("req", Some(args)) => {
-                    drop(args);
-                    unimplemented!();
+                ("view", Some(args)) => {
+                    let id = id_val(args)?;
+                    let output = args.value_of("output").unwrap_or("-");
+                    let claim_id = args.value_of("CLAIM")
+                        .ok_or(format!("Must specify a claim ID"))?;
+                    commands::claim::view(&id, claim_id, output)?;
                 }
                 ("list", Some(args)) => {
                     let id = id_val(args)?;
@@ -735,8 +754,13 @@ fn run() -> Result<(), String> {
                     let stamp = commands::stamp::new(&our_identity_id, claim_id)?;
                     util::write_file(output, stamp.as_bytes())?;
                 }
+                ("req", Some(args)) => {
+                    drop(args);
+                    unimplemented!();
+                }
                 ("list", Some(args)) => {
                     drop(args);
+                    unimplemented!();
                 }
                 ("accept", Some(args)) => {
                     let identity_id = id_val(args)?;

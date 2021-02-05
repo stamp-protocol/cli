@@ -65,6 +65,11 @@ pub fn new(our_identity_id: &str, claim_id: &str) -> Result<String, String> {
     Ok(serialized)
 }
 
+//pub fn request(our_identity_id: &str, claim_id: &str, our_crypto_subkey_search: &str, stamper_identity_id: &str, stamper_crypto_subkey_search: &str) -> Result<(), String> {
+    //let identity = id::try_load_single_identity(our_identity_id)?;
+    //let claim = 
+//}
+
 pub fn accept(our_identity_id: &str, location: &str) -> Result<(), String> {
     let our_identity = id::try_load_single_identity(our_identity_id)?;
     let stamp_contents = util::load_file(location)?;

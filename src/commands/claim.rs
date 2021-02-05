@@ -104,7 +104,7 @@ pub fn new_photo(id: &str, photofile: &str, private: bool) -> Result<(), String>
 pub fn new_pgp(id: &str, private: bool) -> Result<(), String> {
     let (master_key, identity, value) = claim_pre(id, "Enter your PGP ID")?;
     let maybe = maybe_private(&master_key, private, value)?;
-    let spec = ClaimSpec::PGP(maybe);
+    let spec = ClaimSpec::Pgp(maybe);
     claim_post(&master_key, identity, spec)?;
     Ok(())
 }
@@ -129,6 +129,82 @@ pub fn new_relation(id: &str, ty: &str, private: bool) -> Result<(), String> {
     let maybe = maybe_private(&master_key, private, relationship)?;
     let spec = ClaimSpec::Relation(maybe);
     claim_post(&master_key, identity, spec)?;
+    Ok(())
+}
+
+fn unwrap_maybe<T, F>(maybe: &MaybePrivate<T>, masterkey_fn: F) -> Result<T, String>
+    where T: serde::Serialize + serde::de::DeserializeOwned + Clone,
+          F: FnOnce() -> Result<SecretKey, String>,
+{
+    if maybe.has_private() {
+        let master_key = masterkey_fn()?;
+        maybe.open(&master_key)
+            .map_err(|e| format!("Unable to open private claim: {}", e))
+    } else {
+        let fake_master_key = SecretKey::new_xsalsa20poly1305();
+        maybe.open(&fake_master_key)
+            .map_err(|e| format!("Unable to open claim: {}", e))
+    }
+}
+
+pub fn view(id: &str, claim_id: &str, output: &str) -> Result<(), String> {
+    let identity = id::try_load_single_identity(id)?;
+    let mut found: Option<ClaimContainer> = None;
+    for claim in identity.claims() {
+        let id_str = id_str!(claim.claim().id())?;
+        if id_str.starts_with(claim_id) {
+            found = Some(claim.clone());
+            break;
+        }
+    }
+    let claim = found.ok_or(format!("Cannot find the claim {} in identity {}", claim_id, id))?;
+    if claim.has_private() && !identity.is_owned() {
+        Err(format!("You cannot view private claims on an identity you don't own."))?;
+    }
+
+    let id_str = id_str!(identity.id())?;
+    let masterkey_fn = || {
+        let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", util::id_short(&id_str)), identity.created())?;
+        identity.test_master_key(&master_key)
+            .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+        Ok(master_key)
+    };
+
+    let output_bytes = match claim.claim().spec() {
+        ClaimSpec::Identity(id) => {
+            Vec::from(id_str!(id)?.as_bytes())
+        }
+        ClaimSpec::Name(maybe) => {
+            let val = unwrap_maybe(maybe, masterkey_fn)?;
+            Vec::from(val.as_bytes())
+        }
+        ClaimSpec::Email(maybe) => {
+            let val = unwrap_maybe(maybe, masterkey_fn)?;
+            Vec::from(val.as_bytes())
+        }
+        ClaimSpec::Photo(maybe) => {
+            let val = unwrap_maybe(maybe, masterkey_fn)?;
+            Vec::from(val.as_slice())
+        }
+        ClaimSpec::Pgp(maybe) => {
+            let val = unwrap_maybe(maybe, masterkey_fn)?;
+            Vec::from(val.as_bytes())
+        }
+        ClaimSpec::Domain(maybe) => {
+            let val = unwrap_maybe(maybe, masterkey_fn)?;
+            Vec::from(val.as_bytes())
+        }
+        ClaimSpec::Url(maybe) => {
+            let val = unwrap_maybe(maybe, masterkey_fn)?;
+            Vec::from(val.as_str().as_bytes())
+        }
+        ClaimSpec::HomeAddress(maybe) => {
+            let val = unwrap_maybe(maybe, masterkey_fn)?;
+            Vec::from(val.as_bytes())
+        }
+        _ => Err(format!("Viewing is not implemented for this claim type"))?,
+    };
+    util::write_file(output, output_bytes.as_slice())?;
     Ok(())
 }
 
@@ -171,7 +247,8 @@ pub fn delete(id: &str, claim_id: &str) -> Result<(), String> {
 pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option<SecretKey>, verbose: bool) {
     let mut table = Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
-    table.set_titles(row!["ID", "Type", "Value", "Created", "# stamps"]);
+    let id_field = if verbose { "ID" } else { "ID (short)" };
+    table.set_titles(row![id_field, "Type", "Value", "Created", "# stamps"]);
     for claim in claims {
         let (id_full, id_short) = id_str_split!(claim.claim().id());
         let string_from_private = |private: &MaybePrivate<String>| -> String {
@@ -208,7 +285,7 @@ pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option
             ClaimSpec::Name(name) => ("name", string_from_private(name)),
             ClaimSpec::Email(email) => ("email", string_from_private(email)),
             ClaimSpec::Photo(photo) => ("photo", bytes_from_private(photo)),
-            ClaimSpec::PGP(pgp) => ("pgp", string_from_private(pgp)),
+            ClaimSpec::Pgp(pgp) => ("pgp", string_from_private(pgp)),
             ClaimSpec::HomeAddress(address) => ("address", string_from_private(address)),
             ClaimSpec::Relation(relation) => {
                 let rel_str = match relation {

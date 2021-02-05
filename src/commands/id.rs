@@ -3,6 +3,7 @@ use crate::{
     db,
     util
 };
+use indicatif::{ProgressBar, ProgressStyle};
 use prettytable::Table;
 use stamp_core::{
     crypto::key::{SecretKey, SignKeypair, CryptoKeypair},
@@ -95,6 +96,23 @@ pub(crate) fn create_new() -> Result<(), String> {
 }
 
 pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Option<&str>) -> Result<(), String> {
+    let spinner = ProgressBar::new_spinner();
+    spinner.enable_steady_tick(250);
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&[
+                "      ",
+                "*     ",
+                " *    ",
+                "  *   ",
+                "   *  ",
+                "    * ",
+                "     *",
+                "     *",
+            ])
+            .template("[{spinner:.green}] {msg}")
+    );
+    spinner.set_message("Starting vanity ID search, this might take a while.");
     let mut counter = 0;
     let regex = if let Some(re) = regex {
         Some(regex::Regex::new(re).map_err(|e| format!("Problem compiling regex: {:?}", e))?)
@@ -103,8 +121,8 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
     };
     let mut filter = |id_str: &str| -> bool {
         counter += 1;
-        if counter % 100000 == 0 {
-            eprintln!("Searched {} IDs...", counter);
+        if counter % 1000 == 0 {
+            spinner.set_message(&format!("Searched {} IDs", counter));
         }
         if let Some(regex) = regex.as_ref() {
             if !regex.is_match(id_str) {
@@ -124,7 +142,6 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
         eprintln!("Found it! {}", id_str);
         return true;
     };
-    println!("Starting vanity ID search, this might take a while.");
 
     let mut alpha_keypair;
     let mut id;
@@ -240,7 +257,8 @@ pub fn view(search: &str) -> Result<String, String> {
 pub fn print_identities_table(identities: &Vec<VersionedIdentity>, verbose: bool) {
     let mut table = Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
-    table.set_titles(row!["Mine", "ID", "Nickname", "Name", "Email", "Created"]);
+    let id_field = if verbose { "ID" } else { "ID (short)" };
+    table.set_titles(row!["Mine", id_field, "Nickname", "Name", "Email", "Created"]);
     for identity in identities {
         let (id_full, id_short) = id_str_split!(identity.id());
         let nickname = identity.nickname_maybe().unwrap_or(String::from(""));
