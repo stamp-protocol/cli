@@ -5,6 +5,7 @@ use crate::{
 };
 use stamp_core::{
     crypto::sign::{self, Signature},
+    identity::{KeyID, IdentityID},
     util::{base64_encode, base64_decode, SerdeBinary},
 };
 use std::convert::TryFrom;
@@ -15,7 +16,7 @@ pub fn sign(id_sign: &str, key_search_sign: Option<&str>, input: &str, output: &
 
     let msg_bytes = util::read_file(input)?;
     let id_str = id_str!(identity.id())?;
-    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", util::id_short(&id_str)), identity.created())?;
+    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     identity.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {}", e))?;
     let signature = if attached {
@@ -51,9 +52,9 @@ pub fn verify(input_signature: &str, input_message: Option<&str>) -> Result<(), 
     let key_id = sig.signed_by_key();
     let id_str = id_str!(identity_id)?;
     let identity = db::load_identity(identity_id)?
-        .ok_or(format!("Identity {} not found. Have you imported it?", util::id_short(&id_str)))?;
+        .ok_or(format!("Identity {} not found. Have you imported it?", IdentityID::short(&id_str)))?;
     let subkey = identity.keychain().subkey_by_id(key_id)
-        .ok_or(format!("Signing key {} not found in identity {}", util::id_short(&id_str!(key_id)?), util::id_short(&id_str)))?;
+        .ok_or(format!("Signing key {} not found in identity {}", KeyID::short(&id_str!(key_id)?), IdentityID::short(&id_str)))?;
     let res = match &signature {
         Signature::Detached(..) => {
             let input_message = input_message

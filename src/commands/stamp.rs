@@ -4,7 +4,7 @@ use crate::{
     util,
 };
 use stamp_core::{
-    identity::{Confidence, Stamp},
+    identity::{ClaimID, StampID, Confidence, Stamp, IdentityID},
     util::Timestamp,
 };
 use std::convert::TryFrom;
@@ -25,7 +25,7 @@ pub fn new(our_identity_id: &str, claim_id: &str) -> Result<String, String> {
         .ok_or(format!("Claim {} not found in identity {}", claim_id, id_str!(their_identity.id())?))?;
     let their_id_str = id_str!(their_identity.id())?;
     let claim_id_str = id_str!(claim.claim().id())?;
-    util::print_wrapped(&format!("You are about to stamp the claim {} made by the identity {}.\n", util::id_short(&claim_id_str), util::id_short(&their_id_str)));
+    util::print_wrapped(&format!("You are about to stamp the claim {} made by the identity {}.\n", ClaimID::short(&claim_id_str), IdentityID::short(&their_id_str)));
     util::print_wrapped("Effectively, you are vouching for them and that their claim is true. You can specify your confidence in the claim:\n");
     util::print_wrapped("    none\n");
     util::print_wrapped_indent("you are not verifying the claim at all, but wish to stamp it anyway", "        ");
@@ -55,7 +55,7 @@ pub fn new(our_identity_id: &str, claim_id: &str) -> Result<String, String> {
         None
     };
     let our_id = id_str!(our_identity.id())?;
-    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", util::id_short(&our_id)), our_identity.created())?;
+    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&our_id)), our_identity.created())?;
     our_identity.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
     let stamp = our_identity.stamp(&master_key, confidence, Timestamp::now(), their_identity.id(), claim.claim(), expires)
@@ -79,16 +79,16 @@ pub fn accept(our_identity_id: &str, location: &str) -> Result<(), String> {
     let stamp_id_str = id_str!(stamp.id())?;
     let their_id_str = id_str!(their_identity_id)?;
     let their_identity = db::load_identity(their_identity_id)
-        .map_err(|e| format!("Error loading identity for stamp {}: {:?}", util::id_short(&stamp_id_str), e))?
-        .ok_or(format!("Stamp {} was created by the identity {}, which was not found locally and must be imported to accept this stamp", util::id_short(&stamp_id_str), util::id_short(&their_id_str)))?;
+        .map_err(|e| format!("Error loading identity for stamp {}: {:?}", StampID::short(&stamp_id_str), e))?
+        .ok_or(format!("Stamp {} was created by the identity {}, which was not found locally and must be imported to accept this stamp", StampID::short(&stamp_id_str), IdentityID::short(&their_id_str)))?;
     let our_id = id_str!(our_identity.id())?;
-    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", util::id_short(&our_id)), our_identity.created())?;
+    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&our_id)), our_identity.created())?;
     our_identity.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
     let our_identity_mod = our_identity.accept_stamp(&master_key, Timestamp::now(), &their_identity, stamp)
         .map_err(|e| format!("Error accepting stamp: {:?}", e))?;
     db::save_identity(our_identity_mod)?;
-    println!("Stamp {} accepted!", util::id_short(&stamp_id_str));
+    println!("Stamp {} accepted!", StampID::short(&stamp_id_str));
     Ok(())
 }
 

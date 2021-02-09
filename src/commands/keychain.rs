@@ -7,8 +7,9 @@ use prettytable::Table;
 use stamp_core::{
     crypto::{self, key::SecretKey},
     identity::{
+        IdentityID,
         VersionedIdentity,
-        keychain::{Key, Subkey},
+        keychain::{KeyID, Key, Subkey},
     },
     private::Private,
     util::{base64_encode, base64_decode},
@@ -17,7 +18,7 @@ use std::convert::TryFrom;
 
 pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>) -> Result<(), String> {
     let identity = id::try_load_single_identity(id)?;
-    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", util::id_short(id)), identity.created())?;
+    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
     identity.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
     let key = match ty {
@@ -87,7 +88,7 @@ pub fn delete(id: &str, search: &str) -> Result<(), String> {
                     }
                 })
         })
-        .ok_or(format!("Cannot find key {} in identity {}", search, util::id_short(&id_str)))?
+        .ok_or(format!("Cannot find key {} in identity {}", search, IdentityID::short(&id_str)))?
         .clone();
     match key.key().key() {
         Key::Secret(..) | Key::ExtensionSecret(..) => {}
@@ -109,13 +110,13 @@ pub fn delete(id: &str, search: &str) -> Result<(), String> {
         _ => {}
     }
     let key_id = id_str!(key.id())?;
-    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", util::id_short(&id_str)), identity.created())?;
+    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     identity.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
     let identity_mod = identity.delete_subkey(&master_key, key.id())
         .map_err(|e| format!("Problem deleting subkey from keychain: {:?}", e))?;
     db::save_identity(identity_mod)?;
-    println!("Key {} removed.", util::id_short(&key_id));
+    println!("Key {} removed.", KeyID::short(&key_id));
     Ok(())
 }
 
@@ -134,16 +135,16 @@ pub fn revoke(id: &str, search: &str) -> Result<(), String> {
                     }
                 })
         })
-        .ok_or(format!("Cannot find key {} in identity {}", search, util::id_short(&id_str)))?
+        .ok_or(format!("Cannot find key {} in identity {}", search, IdentityID::short(&id_str)))?
         .clone();
     let key_id = id_str!(key.id())?;
-    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", util::id_short(&id_str)), identity.created())?;
+    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     identity.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
     let identity_mod = identity.delete_subkey(&master_key, key.id())
         .map_err(|e| format!("Problem deleting subkey from keychain: {:?}", e))?;
     db::save_identity(identity_mod)?;
-    println!("Key {} revoked.", util::id_short(&key_id));
+    println!("Key {} revoked.", KeyID::short(&key_id));
     Ok(())
 }
 
@@ -195,7 +196,7 @@ pub fn passwd(id: &str, keyfile: Option<&str>, keyparts: Vec<&str>) -> Result<()
         util::print_wrapped("Successfully recovered master key from key parts!\n");
         master_key
     } else {
-        let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", util::id_short(id)), identity.created())?;
+        let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
         identity.test_master_key(&master_key)
             .map_err(|e| format!("Incorrect passphrase: {}", e))?;
         master_key
@@ -227,7 +228,7 @@ pub fn keyfile(id: &str, shamir: &str, output: &str) -> Result<(), String> {
         Err(format!("Shamir minimum shares (M) must be equal or lesser to total shares (S)"))?;
     }
     let identity = id::try_load_single_identity(id)?;
-    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", util::id_short(id)), identity.created())?;
+    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
     identity.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {}", e))?;
     let sharks = sharks::Sharks(min_shares);

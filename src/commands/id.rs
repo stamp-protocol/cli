@@ -7,14 +7,14 @@ use indicatif::{ProgressBar, ProgressStyle};
 use prettytable::Table;
 use stamp_core::{
     crypto::key::{SecretKey, SignKeypair, CryptoKeypair},
-    identity::{Key, Identity, VersionedIdentity, ClaimSpec, PublishedIdentity},
+    identity::{Key, IdentityID, Identity, VersionedIdentity, ClaimSpec, PublishedIdentity},
     private::{Private, MaybePrivate},
     util::{Timestamp, SerdeBinary},
 };
 use std::convert::TryFrom;
 
 fn passphrase_note() {
-    util::print_wrapped("To protect your identity from unauthorized changes, enter a long but memorable master passphrase. Choose something personal that is easy for you to remember but hard for someone else to guess.\n\n  Example: my dog butch has a friend named snow\n\nYou can change this later using the `stamp keychain passwd` command.\n\n");
+    util::print_wrapped("To protect your identity from unauthorized access, enter a long but memorable master passphrase. Choose something personal that is easy for you to remember but hard for someone else to guess.\n\n  Example: my dog butch has a friend named snow\n\nYou can change this later using the `stamp keychain passwd` command.\n\n");
 }
 
 fn prompt_claim_name_email(master_key: &SecretKey, id: Identity) -> Result<Identity, String> {
@@ -68,7 +68,7 @@ fn post_create(master_key: &SecretKey, identity: Identity) -> Result<(), String>
     db::save_identity(identity)?;
     let green = dialoguer::console::Style::new().green();
     let bold = dialoguer::console::Style::new().bold();
-    println!("---\n{} The identity {} has been saved.", green.apply_to("Success!"), util::id_short(&id_str));
+    println!("---\n{} The identity {} has been saved.", green.apply_to("Success!"), IdentityID::short(&id_str));
     let mut conf = config::load()?;
     if conf.default_identity.is_none() {
         println!("Marking identity as default.");
@@ -139,6 +139,7 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
                 return false;
             }
         }
+        spinner.finish();
         eprintln!("Found it! {}", id_str);
         return true;
     };
@@ -202,7 +203,7 @@ pub fn import(location: &str) -> Result<(), String> {
 pub fn publish(id: &str) -> Result<String, String> {
     let identity = try_load_single_identity(id)?;
     let id_str = id_str!(identity.id())?;
-    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", util::id_short(&id_str)), identity.created())?;
+    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     let now = Timestamp::now();
     let published = PublishedIdentity::publish(&master_key, now, identity)
         .map_err(|e| format!("Error creating published identity: {:?}", e))?;

@@ -21,4 +21,6 @@ sharks = "0.4"
 stamp-core = { path = "../core" }
 textwrap = { version = "0.13", features = ["terminal_size"] }
 toml = "0.5"
+ureq = "2.0.1"
+url = "2.2"
 

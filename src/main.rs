@@ -7,6 +7,9 @@ mod config;
 mod db;
 
 use clap::{Arg, App, AppSettings, ArgMatches, SubCommand};
+use stamp_core::{
+    identity::IdentityID,
+};
 
 fn run() -> Result<(), String> {
     let conf = config::load()?;
@@ -23,7 +26,7 @@ fn run() -> Result<(), String> {
             .map(|x| String::from(x))
             .or_else(|| {
                 if let Some(id_full) = conf.default_identity.as_ref() {
-                    eprintln!("Selecting default identity {} (override with `--id <ID>`)\n", util::id_short(&id_full));
+                    eprintln!("Selecting default identity {} (override with `--id <ID>`)\n", IdentityID::short(&id_full));
                 }
                 conf.default_identity.clone()
             })
@@ -172,6 +175,16 @@ fn run() -> Result<(), String> {
                                         .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                         )
                         .subcommand(
+                            SubCommand::with_name("email")
+                                .about("Claim ownership of an email address.")
+                                .setting(AppSettings::DisableVersion)
+                                .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
+                                .arg(Arg::with_name("private")
+                                        .short("p")
+                                        .long("private")
+                                        .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
+                        )
+                        .subcommand(
                             SubCommand::with_name("photo")
                                 .about("Claim that a photo is you.")
                                 .setting(AppSettings::DisableVersion)
@@ -186,8 +199,8 @@ fn run() -> Result<(), String> {
                                         .help("The input file to read the photo from. You can leave blank or use the value '-' to signify STDIN."))
                         )
                         .subcommand(
-                            SubCommand::with_name("email")
-                                .about("Claim ownership of an email address.")
+                            SubCommand::with_name("pgp")
+                                .about("Claim ownership of a PGP identity. It's probably best to use the long-form ID for this.")
                                 .setting(AppSettings::DisableVersion)
                                 .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
                                 .arg(Arg::with_name("private")
@@ -196,8 +209,18 @@ fn run() -> Result<(), String> {
                                         .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                         )
                         .subcommand(
-                            SubCommand::with_name("pgp")
-                                .about("Claim ownership of a PGP identity. It's probably best to use the long-form ID for this.")
+                            SubCommand::with_name("domain")
+                                .about("Claim ownership of a domain. You must have access to create a TXT record on the domain. This claim can be checked by anybody using the `stamp claim check` command.")
+                                .setting(AppSettings::DisableVersion)
+                                .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
+                                .arg(Arg::with_name("private")
+                                        .short("p")
+                                        .long("private")
+                                        .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
+                        )
+                        .subcommand(
+                            SubCommand::with_name("url")
+                                .about("Claim ownership of a URL. This can be used for claiming ownership of websites or social media profiles. You must have the ability to update the content this URL points to. This claim can be checked by anybody using the `stamp claim check` command.")
                                 .setting(AppSettings::DisableVersion)
                                 .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
                                 .arg(Arg::with_name("private")
@@ -229,6 +252,15 @@ fn run() -> Result<(), String> {
                                         .long("private")
                                         .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                         )
+                )
+                .subcommand(
+                    SubCommand::with_name("check")
+                        .about("This command verifies domain and URL claims immediately. This lets us prove ownership of domains, websites, and social media profiles in a distributed fashion without requiring third-party verification. Bye, Keybase.")
+                        .setting(AppSettings::DisableVersion)
+                        .arg(Arg::with_name("CLAIM")
+                                .required(true)
+                                .index(1)
+                                .help("The ID of the claim we're checking. Must be a public `Domain` or `URL` claim. The identity owning the claim must be imported locally."))
                 )
                 .subcommand(
                     SubCommand::with_name("view")
@@ -397,6 +429,26 @@ fn run() -> Result<(), String> {
                         .arg(Arg::with_name("SEARCH")
                                 .index(1)
                                 .help("The ID or name of the key(s) we're searching for."))
+                )
+                .subcommand(
+                    SubCommand::with_name("update")
+                        .about("Change a subkey's name/description.")
+                        .setting(AppSettings::DisableVersion)
+                        .arg(id_arg("The ID of the identity which has the key we are updating. This overrides the configured default identity."))
+                        .arg(Arg::with_name("name")
+                                .short("n")
+                                .long("name")
+                                .takes_value(true)
+                                .help("Set the new name of this key."))
+                        .arg(Arg::with_name("description")
+                                .short("d")
+                                .long("desc")
+                                .takes_value(true)
+                                .help("Set the new description of this key."))
+                        .arg(Arg::with_name("SEARCH")
+                                .required(true)
+                                .index(1)
+                                .help("The ID or name of the key(s) we're updating."))
                 )
                 .subcommand(
                     SubCommand::with_name("delete")
@@ -708,6 +760,16 @@ fn run() -> Result<(), String> {
                             let private = args.is_present("private");
                             commands::claim::new_pgp(&id, private)?;
                         }
+                        ("domain", Some(args)) => {
+                            let id = id_val(args)?;
+                            let private = args.is_present("private");
+                            commands::claim::new_domain(&id, private)?;
+                        }
+                        ("url", Some(args)) => {
+                            let id = id_val(args)?;
+                            let private = args.is_present("private");
+                            commands::claim::new_url(&id, private)?;
+                        }
                         ("address", Some(args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
@@ -721,6 +783,11 @@ fn run() -> Result<(), String> {
                         }
                         _ => println!("{}", args.usage()),
                     }
+                }
+                ("check", Some(args)) => {
+                    let claim_id = args.value_of("CLAIM")
+                        .ok_or(format!("Must specify a claim ID"))?;
+                    commands::claim::check(claim_id)?;
                 }
                 ("view", Some(args)) => {
                     let id = id_val(args)?;
@@ -791,6 +858,17 @@ fn run() -> Result<(), String> {
                     let search = args.value_of("SEARCH");
                     let verbose = args.is_present("verbose");
                     commands::keychain::list(&id, search, verbose)?;
+                }
+                ("update", Some(args)) => {
+                    let id = id_val(args)?;
+                    let search = args.value_of("SEARCH");
+                    let name = args.value_of("name");
+                    let desc = args.value_of("description");
+                    drop(id);
+                    drop(search);
+                    drop(name);
+                    drop(desc);
+                    unimplemented!();
                 }
                 ("delete", Some(args)) => {
                     let id = id_val(args)?;

@@ -41,10 +41,6 @@ pub(crate) fn value_prompt(prompt: &str) -> Result<String, String> {
     return Ok(val);
 }
 
-pub fn id_short(id: &str) -> String {
-    String::from(&id[0..16])
-}
-
 macro_rules! id_str {
     ($id:expr) => {
         String::try_from($id)
@@ -56,7 +52,7 @@ macro_rules! id_str_split {
     ($id:expr) => {
         match String::try_from($id) {
             Ok(id_full) => {
-                let id_short = util::id_short(&id_full);
+                let id_short = stamp_core::identity::IdentityID::short(&id_full);
                 (id_full, id_short)
              }
             Err(..) => (String::from("<error serializing ID>"), String::from("<error serializing ID>")),

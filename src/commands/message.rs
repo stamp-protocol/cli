@@ -5,6 +5,7 @@ use crate::{
 };
 use stamp_core::{
     crypto::message::{self, Message},
+    identity::IdentityID,
     util::{base64_encode, base64_decode, SerdeBinary},
 };
 use std::convert::TryFrom;
@@ -24,7 +25,7 @@ pub fn send(id_from: &str, key_search_from: Option<&str>, key_search_to: Option<
 
     let msg_bytes = util::read_file(input)?;
     let id_str = id_str!(identity_from.id())?;
-    let master_key_from = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", util::id_short(&id_str)), identity_from.created())?;
+    let master_key_from = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity_from.created())?;
     identity_from.test_master_key(&master_key_from)
         .map_err(|e| format!("Incorrect passphrase: {}", e))?;
     let sealed = message::send(&master_key_from, identity_from.id(), &key_from, &key_to, msg_bytes.as_slice())
@@ -78,7 +79,7 @@ pub fn open(id_to: &str, key_search_open: Option<&str>, input: &str, output: &st
         ({$master_key:ident, $key_to:ident, $sealed_message:ident } $opener:expr) => {
             let $key_to = keychain::find_keys_by_search_or_prompt(&identity_to, key_search_open, "crypto", |sub| sub.key().as_cryptokey())?;
             let id_str = id_str!(identity_to.id())?;
-            let $master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", util::id_short(&id_str)), identity_to.created())?;
+            let $master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity_to.created())?;
             identity_to.test_master_key(&$master_key)
                 .map_err(|e| format!("Incorrect passphrase: {}", e))?;
             $opener

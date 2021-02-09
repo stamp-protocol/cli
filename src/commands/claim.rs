@@ -7,6 +7,7 @@ use prettytable::Table;
 use stamp_core::{
     crypto::key::SecretKey,
     identity::{
+        ClaimID,
         ClaimBin,
         ClaimSpec,
         ClaimContainer,
@@ -19,6 +20,7 @@ use stamp_core::{
     util::Timestamp,
 };
 use std::convert::TryFrom;
+use url::Url;
 
 fn prompt_claim_value(prompt: &str) -> Result<String, String> {
     let value: String = dialoguer::Input::new()
@@ -31,7 +33,7 @@ fn prompt_claim_value(prompt: &str) -> Result<String, String> {
 fn claim_pre(id: &str, prompt: &str) -> Result<(SecretKey, VersionedIdentity, String), String> {
     let identity = id::try_load_single_identity(id)?;
     let id_str = id_str!(identity.id())?;
-    let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", util::id_short(&id_str)), identity.created())?;
+    let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     identity.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
     let value = prompt_claim_value(prompt)?;
@@ -91,7 +93,7 @@ pub fn new_photo(id: &str, photofile: &str, private: bool) -> Result<(), String>
     if photo_bytes.len() > (1024 * 8) {
         Err(format!("Please choose a photo smaller than {} bytes (given photo is {} bytes)", CUTOFF, photo_bytes.len()))?;
     }
-    let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", util::id_short(&id_str)), identity.created())?;
+    let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     identity.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
 
@@ -106,6 +108,30 @@ pub fn new_pgp(id: &str, private: bool) -> Result<(), String> {
     let maybe = maybe_private(&master_key, private, value)?;
     let spec = ClaimSpec::Pgp(maybe);
     claim_post(&master_key, identity, spec)?;
+    Ok(())
+}
+
+pub fn new_domain(id: &str, private: bool) -> Result<(), String> {
+    let (master_key, identity, value) = claim_pre(id, "Enter your domain name")?;
+    let maybe = maybe_private(&master_key, private, value)?;
+    let spec = ClaimSpec::Domain(maybe);
+    claim_post(&master_key, identity, spec)?;
+    Ok(())
+}
+
+pub fn new_url(id: &str, private: bool) -> Result<(), String> {
+    let (master_key, identity, value) = claim_pre(id, "Enter the URL you own")?;
+    let url = url::Url::parse(&value)
+        .map_err(|e| format!("Failed to parse URL: {}", e))?;
+    let maybe = maybe_private(&master_key, private, url)?;
+    let spec = ClaimSpec::Url(maybe);
+    let identity_mod = identity.make_claim(&master_key, Timestamp::now(), spec)
+        .map_err(|e| format!("There was a problem adding the claim to your identity: {:?}", e))?;
+    let claim = identity_mod.claims().iter().last().ok_or(format!("Unable to find created claim"))?;
+    let instant_values = claim.claim().instant_verify_allowed_values(identity_mod.id())
+        .map_err(|e| format!("Problem grabbing allowed claim values: {}", e))?;
+    db::save_identity(identity_mod)?;
+    println!("{}", util::text_wrap(&format!("Claim added! You can finalize this claim and make it verifiable instantly to others by updating the URL {} to contain one of the following two values:\n\n  {}\n  {}\n", value, instant_values[0], instant_values[1])));
     Ok(())
 }
 
@@ -147,6 +173,66 @@ fn unwrap_maybe<T, F>(maybe: &MaybePrivate<T>, masterkey_fn: F) -> Result<T, Str
     }
 }
 
+pub fn check(claim_id: &str) -> Result<(), String> {
+    let identity = db::find_identity_by_prefix("claim", claim_id)?
+        .ok_or(format!("Identity with claim id {} was not found", claim_id))?;
+    let id_str = id_str!(identity.id())?;
+    let claim = identity.claims().iter()
+        .find(|x| id_str!(x.claim().id()).map(|x| x.starts_with(claim_id)) == Ok(true))
+        .ok_or(format!("Couldn't find the claim {} in identity {}", claim_id, IdentityID::short(&id_str)))?;
+    let claim_id_str = id_str!(claim.claim().id())?;
+    let errfn = |err: String| -> String {
+        let red = dialoguer::console::Style::new().red();
+        println!("\nThe claim {} {}\n", ClaimID::short(&claim_id_str), red.apply_to("could not be verified"));
+        err
+    };
+    let instant_values = claim.claim().instant_verify_allowed_values(identity.id())
+        .map_err(|e| format!("Could not get verification values for claim {}: {}", claim_id, e))?;
+    match claim.claim().spec() {
+        ClaimSpec::Domain(maybe) => {
+            let domain = maybe.open_public().ok_or(format!("This claim is private, but must be public to be checked."))?;
+        }
+        ClaimSpec::Url(maybe) => {
+            let url = maybe.open_public().ok_or(format!("This claim is private, but must be public to be checked."))?;
+            let body = ureq::get(&url.clone().into_string())
+                .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .set("Accept-Language", "en-US,en;q=0.5")
+                .set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:84.0) Gecko/20100101 Firefox/84.0")
+                .call()
+                .map_err(|e| {
+                    match e {
+                        ureq::Error::Status(code, res) => {
+                            let res_str = res.into_string()
+                                .unwrap_or_else(|e| format!("Could not map error response to string: {:?}", e));
+                            format!("Problem calling GET on {}: {} -- {}", url, code, &res_str[0..std::cmp::min(100, res_str.len())])
+                        },
+                        _ => format!("Problem calling GET on {}: {}", url, e)
+                    }
+                })
+                .map_err(errfn)?
+                .into_string()
+                .map_err(|e| format!("Problem grabbing output of {}: {}", url, e))
+                .map_err(errfn)?;
+            let mut found = false;
+            for val in instant_values {
+                if body.contains(&val) {
+                    found = true;
+                    break;
+                }
+            }
+            if found {
+                let green = dialoguer::console::Style::new().green();
+                println!("\nThe claim {} has been {}!\n", ClaimID::short(&claim_id_str), green.apply_to("verified"));
+                println!("{}", util::text_wrap(&format!("It is very likely that the identity {} owns the URL {}", IdentityID::short(&id_str), url)));
+            } else {
+                Err(errfn(format!("The URL {} does not contain any of the required values for verification", url)))?;
+            }
+        }
+        _ => Err(format!("Claim checking is only available for domain or URL claim types."))?,
+    }
+    Ok(())
+}
+
 pub fn view(id: &str, claim_id: &str, output: &str) -> Result<(), String> {
     let identity = id::try_load_single_identity(id)?;
     let mut found: Option<ClaimContainer> = None;
@@ -164,7 +250,7 @@ pub fn view(id: &str, claim_id: &str, output: &str) -> Result<(), String> {
 
     let id_str = id_str!(identity.id())?;
     let masterkey_fn = || {
-        let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", util::id_short(&id_str)), identity.created())?;
+        let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
         identity.test_master_key(&master_key)
             .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
         Ok(master_key)
@@ -211,7 +297,7 @@ pub fn view(id: &str, claim_id: &str, output: &str) -> Result<(), String> {
 pub fn list(id: &str, private: bool, verbose: bool) -> Result<(), String> {
     let identity = id::try_load_single_identity(id)?;
     let master_key_maybe = if private {
-        let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", util::id_short(id)), identity.created())?;
+        let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
         identity.test_master_key(&master_key)
             .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
         Some(master_key)
@@ -236,7 +322,7 @@ pub fn delete(id: &str, claim_id: &str) -> Result<(), String> {
     if !util::yesno_prompt(&format!("Really delete the claim {} and all of its stamps? [y/N]", claim_id), "n")? {
         return Ok(());
     }
-    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", util::id_short(id)), identity.created())?;
+    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
     let identity_mod = identity.remove_claim(&master_key, claim.claim().id())
         .map_err(|e| format!("There was a problem removing the claim: {:?}", e))?;
     db::save_identity(identity_mod)?;
@@ -277,6 +363,20 @@ pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option
                 }
             }
         };
+        let url_from_private = |private: &MaybePrivate<Url>| -> String {
+            if let Some(master_key) = master_key_maybe.as_ref() {
+                private.open(master_key)
+                    .map(|x| x.into_string())
+                    .unwrap_or_else(|e| format!("Decryption error: {}", e))
+            } else {
+                match private {
+                    MaybePrivate::Public(val) => val.clone().into_string(),
+                    MaybePrivate::Private(..) => {
+                        String::from("<private>")
+                    }
+                }
+            }
+        };
         let (ty, val) = match claim.claim().spec() {
             ClaimSpec::Identity(id) => {
                 let (id_full, id_short) = id_str_split!(id);
@@ -286,6 +386,8 @@ pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option
             ClaimSpec::Email(email) => ("email", string_from_private(email)),
             ClaimSpec::Photo(photo) => ("photo", bytes_from_private(photo)),
             ClaimSpec::Pgp(pgp) => ("pgp", string_from_private(pgp)),
+            ClaimSpec::Domain(domain) => ("domain", string_from_private(domain)),
+            ClaimSpec::Url(url) => ("url", url_from_private(url)),
             ClaimSpec::HomeAddress(address) => ("address", string_from_private(address)),
             ClaimSpec::Relation(relation) => {
                 let rel_str = match relation {
