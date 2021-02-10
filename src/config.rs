@@ -13,7 +13,7 @@ pub struct Config {
 }
 
 pub fn load() -> Result<Config, String> {
-    let data_dir = util::data_dir()?;
+    let data_dir = util::config_dir()?;
     let mut config_file = data_dir.clone();
     config_file.push("config.toml");
     let config = match File::open(&config_file) {
@@ -40,7 +40,7 @@ pub fn load() -> Result<Config, String> {
 }
 
 pub fn save(config: &Config) -> Result<(), String> {
-    let data_dir = util::data_dir()?;
+    let data_dir = util::config_dir()?;
     let mut config_file = data_dir.clone();
     config_file.push("config.toml");
     let serialized = toml::to_string_pretty(config)

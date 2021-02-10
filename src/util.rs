@@ -16,6 +16,14 @@ pub fn data_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+pub fn config_dir() -> Result<PathBuf, String> {
+    let mut dir = dirs::config_dir()
+        .or_else(|| dirs::home_dir().map(|mut x| { x.push(".stamp"); x }))
+        .ok_or(String::from("Cannot find user's home or data directory."))?;
+    dir.push("stamp");
+    Ok(dir)
+}
+
 pub(crate) fn term_maxwidth() -> usize { 120 }
 
 pub(crate) fn yesno_prompt(prompt: &str, default: &str) -> Result<bool, String> {
