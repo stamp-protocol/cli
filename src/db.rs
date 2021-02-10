@@ -10,9 +10,12 @@ use stamp_core::{
     util::SerdeBinary,
 };
 use std::convert::TryFrom;
+use std::fs;
 
 fn conn() -> Result<Connection, String> {
     let dir = util::data_dir()?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| format!("Cannot create data directory: {:?}", e))?;
     let mut db_file = dir.clone();
     db_file.push("db.sqlite");
     let flags =
