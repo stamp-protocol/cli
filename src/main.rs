@@ -148,7 +148,7 @@ fn run() -> Result<(), String> {
         )
         .subcommand(
             SubCommand::with_name("claim")
-                .about("Manages claims for identities you own. Claims are pieces of identifying information attached to your identity that others can verify and \"stamp.\"")
+                .about("Allows updating and checking claims. Claims are pieces of identifying information attached to your identity that others can verify and \"stamp.\"")
                 .alias("claims")
                 .setting(AppSettings::DisableVersion)
                 .setting(AppSettings::SubcommandRequiredElseHelp)
@@ -167,6 +167,17 @@ fn run() -> Result<(), String> {
                         .subcommand(
                             SubCommand::with_name("name")
                                 .about("Claim your full name. Generally you only have one name claim, but you are free to add more if you wish.")
+                                .setting(AppSettings::DisableVersion)
+                                .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
+                                .arg(Arg::with_name("private")
+                                        .short("p")
+                                        .long("private")
+                                        .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
+                        )
+                        .subcommand(
+                            SubCommand::with_name("birthday")
+                                .alias("dob")
+                                .about("Claim your birthday/date of birth. Generally you only have one birthday claim, but you are free to add more if you wish.")
                                 .setting(AppSettings::DisableVersion)
                                 .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
                                 .arg(Arg::with_name("private")
@@ -742,6 +753,11 @@ fn run() -> Result<(), String> {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
                             commands::claim::new_name(&id, private)?;
+                        }
+                        ("birthday", Some(args)) => {
+                            let id = id_val(args)?;
+                            let private = args.is_present("private");
+                            commands::claim::new_birthday(&id, private)?;
                         }
                         ("email", Some(args)) => {
                             let id = id_val(args)?;

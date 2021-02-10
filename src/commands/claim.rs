@@ -17,9 +17,10 @@ use stamp_core::{
         VersionedIdentity,
     },
     private::MaybePrivate,
-    util::Timestamp,
+    util::{Timestamp, Date},
 };
 use std::convert::TryFrom;
+use std::str::FromStr;
 use url::Url;
 
 fn prompt_claim_value(prompt: &str) -> Result<String, String> {
@@ -73,6 +74,16 @@ pub fn new_name(id: &str, private: bool) -> Result<(), String> {
     let (master_key, identity, value) = claim_pre(id, "Enter your name")?;
     let maybe = maybe_private(&master_key, private, value)?;
     let spec = ClaimSpec::Name(maybe);
+    claim_post(&master_key, identity, spec)?;
+    Ok(())
+}
+
+pub fn new_birthday(id: &str, private: bool) -> Result<(), String> {
+    let (master_key, identity, value) = claim_pre(id, "Enter your date of birth (eg 1987-11-23)")?;
+    let dob = Date::from_str(&value)
+        .map_err(|e| format!("Could not read that date format: {}", e))?;
+    let maybe = maybe_private(&master_key, private, dob)?;
+    let spec = ClaimSpec::Birthday(maybe);
     claim_post(&master_key, identity, spec)?;
     Ok(())
 }
@@ -337,58 +348,49 @@ pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option
     table.set_titles(row![id_field, "Type", "Value", "Created", "# stamps"]);
     for claim in claims {
         let (id_full, id_short) = id_str_split!(claim.claim().id());
-        let string_from_private = |private: &MaybePrivate<String>| -> String {
-            if let Some(master_key) = master_key_maybe.as_ref() {
-                private.open(master_key).unwrap_or_else(|e| format!("Decryption error: {}", e))
-            } else {
-                match private {
-                    MaybePrivate::Public(val) => val.clone(),
-                    MaybePrivate::Private(..) => {
-                        String::from("<private>")
+        macro_rules! extract_str {
+            ($maybe:expr, $tostr:expr) => {
+                if let Some(master_key) = master_key_maybe.as_ref() {
+                    $maybe.open(master_key)
+                        .map(|val| {
+                            let strval = $tostr(val);
+                            if $maybe.has_private() {
+                                let green = dialoguer::console::Style::new().green();
+                                format!("{}", green.apply_to(&strval))
+                            } else {
+                                strval
+                            }
+                        })
+                        .unwrap_or_else(|e| format!("Decryption error: {}", e))
+                } else {
+                    match $maybe {
+                        MaybePrivate::Public(val) => {
+                            $tostr(val.clone())
+                        }
+                        MaybePrivate::Private(..) => {
+                            let red = dialoguer::console::Style::new().red();
+                            format!("{}", red.apply_to("<private>"))
+                        }
                     }
                 }
-            }
-        };
-        let bytes_from_private = |private: &MaybePrivate<ClaimBin>| -> String {
-            if let Some(master_key) = master_key_maybe.as_ref() {
-                private.open(master_key)
-                    .map(|x| format!("<{} bytes>", x.len()))
-                    .unwrap_or_else(|e| format!("Decryption error: {}", e))
-            } else {
-                match private {
-                    MaybePrivate::Public(val) => format!("<{} bytes>", val.len()),
-                    MaybePrivate::Private(..) => {
-                        String::from("<private>")
-                    }
-                }
-            }
-        };
-        let url_from_private = |private: &MaybePrivate<Url>| -> String {
-            if let Some(master_key) = master_key_maybe.as_ref() {
-                private.open(master_key)
-                    .map(|x| x.into_string())
-                    .unwrap_or_else(|e| format!("Decryption error: {}", e))
-            } else {
-                match private {
-                    MaybePrivate::Public(val) => val.clone().into_string(),
-                    MaybePrivate::Private(..) => {
-                        String::from("<private>")
-                    }
-                }
-            }
-        };
+            };
+            ($maybe:expr) => {
+                extract_str!($maybe, |x| x)
+            };
+        }
         let (ty, val) = match claim.claim().spec() {
             ClaimSpec::Identity(id) => {
                 let (id_full, id_short) = id_str_split!(id);
                 ("identity", if verbose { id_full } else { id_short })
             }
-            ClaimSpec::Name(name) => ("name", string_from_private(name)),
-            ClaimSpec::Email(email) => ("email", string_from_private(email)),
-            ClaimSpec::Photo(photo) => ("photo", bytes_from_private(photo)),
-            ClaimSpec::Pgp(pgp) => ("pgp", string_from_private(pgp)),
-            ClaimSpec::Domain(domain) => ("domain", string_from_private(domain)),
-            ClaimSpec::Url(url) => ("url", url_from_private(url)),
-            ClaimSpec::HomeAddress(address) => ("address", string_from_private(address)),
+            ClaimSpec::Name(name) => ("name", extract_str!(name)),
+            ClaimSpec::Birthday(birthday) => ("birthday", extract_str!(birthday, |x: Date| x.to_string())),
+            ClaimSpec::Email(email) => ("email", extract_str!(email)),
+            ClaimSpec::Photo(photo) => ("photo", extract_str!(photo, |x: ClaimBin| format!("<{} bytes>", x.len()))),
+            ClaimSpec::Pgp(pgp) => ("pgp", extract_str!(pgp)),
+            ClaimSpec::Domain(domain) => ("domain", extract_str!(domain)),
+            ClaimSpec::Url(url) => ("url", extract_str!(url, |x: Url| x.into_string())),
+            ClaimSpec::HomeAddress(address) => ("address", extract_str!(address)),
             ClaimSpec::Relation(relation) => {
                 let rel_str = match relation {
                     MaybePrivate::Public(relationship) => {
