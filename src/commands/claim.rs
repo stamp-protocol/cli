@@ -1,3 +1,4 @@
+use aux;
 use crate::{
     commands::id,
     db,
@@ -124,9 +125,20 @@ pub fn new_pgp(id: &str, private: bool) -> Result<(), String> {
 
 pub fn new_domain(id: &str, private: bool) -> Result<(), String> {
     let (master_key, identity, value) = claim_pre(id, "Enter your domain name")?;
-    let maybe = maybe_private(&master_key, private, value)?;
+    let maybe = maybe_private(&master_key, private, value.clone())?;
     let spec = ClaimSpec::Domain(maybe);
-    claim_post(&master_key, identity, spec)?;
+    if private {
+        claim_post(&master_key, identity, spec)?;
+    } else {
+        let identity_mod = identity.make_claim(&master_key, Timestamp::now(), spec)
+            .map_err(|e| format!("There was a problem adding the claim to your identity: {:?}", e))?;
+        let claim = identity_mod.claims().iter().last().ok_or(format!("Unable to find created claim"))?;
+        let instant_values = claim.claim().instant_verify_allowed_values(identity_mod.id())
+            .map_err(|e| format!("Problem grabbing allowed claim values: {}", e))?;
+        db::save_identity(identity_mod)?;
+        println!("{}", util::text_wrap(&format!("Claim added! You can finalize this claim and make it verifiable instantly to others by adding a DNS TXT record to the domain {} to contain one of the following two values:\n\n", value)));
+        println!("  {}\n  {}\n", instant_values[0], instant_values[1]);
+    }
     Ok(())
 }
 
@@ -136,13 +148,18 @@ pub fn new_url(id: &str, private: bool) -> Result<(), String> {
         .map_err(|e| format!("Failed to parse URL: {}", e))?;
     let maybe = maybe_private(&master_key, private, url)?;
     let spec = ClaimSpec::Url(maybe);
-    let identity_mod = identity.make_claim(&master_key, Timestamp::now(), spec)
-        .map_err(|e| format!("There was a problem adding the claim to your identity: {:?}", e))?;
-    let claim = identity_mod.claims().iter().last().ok_or(format!("Unable to find created claim"))?;
-    let instant_values = claim.claim().instant_verify_allowed_values(identity_mod.id())
-        .map_err(|e| format!("Problem grabbing allowed claim values: {}", e))?;
-    db::save_identity(identity_mod)?;
-    println!("{}", util::text_wrap(&format!("Claim added! You can finalize this claim and make it verifiable instantly to others by updating the URL {} to contain one of the following two values:\n\n  {}\n  {}\n", value, instant_values[0], instant_values[1])));
+    if private {
+        claim_post(&master_key, identity, spec)?;
+    } else {
+        let identity_mod = identity.make_claim(&master_key, Timestamp::now(), spec)
+            .map_err(|e| format!("There was a problem adding the claim to your identity: {:?}", e))?;
+        let claim = identity_mod.claims().iter().last().ok_or(format!("Unable to find created claim"))?;
+        let instant_values = claim.claim().instant_verify_allowed_values(identity_mod.id())
+            .map_err(|e| format!("Problem grabbing allowed claim values: {}", e))?;
+        db::save_identity(identity_mod)?;
+        println!("{}", util::text_wrap(&format!("Claim added! You can finalize this claim and make it verifiable instantly to others by updating the URL {} to contain one of the following two values:\n\n", value)));
+        println!("  {}\n  {}\n", instant_values[0], instant_values[1]);
+    }
     Ok(())
 }
 
@@ -192,56 +209,19 @@ pub fn check(claim_id: &str) -> Result<(), String> {
         .find(|x| id_str!(x.claim().id()).map(|x| x.starts_with(claim_id)) == Ok(true))
         .ok_or(format!("Couldn't find the claim {} in identity {}", claim_id, IdentityID::short(&id_str)))?;
     let claim_id_str = id_str!(claim.claim().id())?;
-    let errfn = |err: String| -> String {
-        let red = dialoguer::console::Style::new().red();
-        println!("\nThe claim {} {}\n", ClaimID::short(&claim_id_str), red.apply_to("could not be verified"));
-        err
-    };
-    let instant_values = claim.claim().instant_verify_allowed_values(identity.id())
-        .map_err(|e| format!("Could not get verification values for claim {}: {}", claim_id, e))?;
-    match claim.claim().spec() {
-        ClaimSpec::Domain(maybe) => {
-            let domain = maybe.open_public().ok_or(format!("This claim is private, but must be public to be checked."))?;
+    match aux::check(identity.id(), claim.claim()) {
+        Ok(url) => {
+            let green = dialoguer::console::Style::new().green();
+            println!("\nThe claim {} has been {}!\n", ClaimID::short(&claim_id_str), green.apply_to("verified"));
+            println!("{}", util::text_wrap(&format!("It is very likely that the identity {} owns the resource {}", IdentityID::short(&id_str), url)));
+            Ok(())
         }
-        ClaimSpec::Url(maybe) => {
-            let url = maybe.open_public().ok_or(format!("This claim is private, but must be public to be checked."))?;
-            let body = ureq::get(&url.clone().into_string())
-                .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                .set("Accept-Language", "en-US,en;q=0.5")
-                .set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:84.0) Gecko/20100101 Firefox/84.0")
-                .call()
-                .map_err(|e| {
-                    match e {
-                        ureq::Error::Status(code, res) => {
-                            let res_str = res.into_string()
-                                .unwrap_or_else(|e| format!("Could not map error response to string: {:?}", e));
-                            format!("Problem calling GET on {}: {} -- {}", url, code, &res_str[0..std::cmp::min(100, res_str.len())])
-                        },
-                        _ => format!("Problem calling GET on {}: {}", url, e)
-                    }
-                })
-                .map_err(errfn)?
-                .into_string()
-                .map_err(|e| format!("Problem grabbing output of {}: {}", url, e))
-                .map_err(errfn)?;
-            let mut found = false;
-            for val in instant_values {
-                if body.contains(&val) {
-                    found = true;
-                    break;
-                }
-            }
-            if found {
-                let green = dialoguer::console::Style::new().green();
-                println!("\nThe claim {} has been {}!\n", ClaimID::short(&claim_id_str), green.apply_to("verified"));
-                println!("{}", util::text_wrap(&format!("It is very likely that the identity {} owns the URL {}", IdentityID::short(&id_str), url)));
-            } else {
-                Err(errfn(format!("The URL {} does not contain any of the required values for verification", url)))?;
-            }
+        Err(err) => {
+            let red = dialoguer::console::Style::new().red();
+            println!("\nThe claim {} {}\n", ClaimID::short(&claim_id_str), red.apply_to("could not be verified"));
+            Err(err)
         }
-        _ => Err(format!("Claim checking is only available for domain or URL claim types."))?,
     }
-    Ok(())
 }
 
 pub fn view(id: &str, claim_id: &str, output: &str) -> Result<(), String> {

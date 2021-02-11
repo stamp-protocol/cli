@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 atty = "0.2"
+aux = { path = "../aux" }
 clap = "2.33.3"
 dialoguer = "0.7"
 dirs = "3.0"
@@ -21,6 +22,5 @@ sharks = "0.4"
 stamp-core = { path = "../core" }
 textwrap = { version = "0.13", features = ["terminal_size"] }
 toml = "0.5"
-ureq = "2.0.1"
 url = "2.2"
 
