@@ -3,10 +3,8 @@ use crate::{
 };
 use rusqlite::{params, Connection};
 use stamp_core::{
-    identity::{
-        IdentityID,
-        VersionedIdentity,
-    },
+    dag::Transactions,
+    identity::IdentityID,
     util::SerdeBinary,
 };
 use std::convert::TryFrom;
@@ -38,34 +36,39 @@ fn json_arr(vec: &Vec<String>) -> String {
     format!(r#"["{}"]"#, vec.join(r#"",""#))
 }
 
-pub fn save_identity<T: Into<VersionedIdentity>>(identity: T) -> Result<(), String> {
-    let versioned = identity.into();
-    let id_str = id_str!(versioned.id())?;
-    let nickname = versioned.nickname_maybe();
-    let created = format!("{}", versioned.created().format("%+"));
-    let serialized = versioned.serialize_binary()
-        .map_err(|e| format!("Error serializing identity: {:?}", e))?;
+pub fn save_identity(transactions: Transactions) -> Result<(), String> {
+    let identity = transactions.build_identity()
+        .map_err(|e| format!("problem building identity: {}", e))?;
+    let id_str = id_str!(identity.id())?;
+    let nickname = identity.nickname_maybe();
+    let created = format!("{}", identity.created().format("%+"));
 
-    let name_lookup = versioned.names();
-    let email_lookup = versioned.emails();
-    let claim_lookup = versioned.claims().iter()
+    let name_lookup = identity.names();
+    let email_lookup = identity.emails();
+    let claim_lookup = identity.claims().iter()
         .map(|x| id_str!(x.claim().id()))
         .collect::<Result<Vec<String>, String>>()
         .map_err(|e| format!("Error grabbing claims for indexing: {:?}", e))?;
-    let stamp_lookup = versioned.claims().iter()
+    let stamp_lookup = identity.claims().iter()
         .map(|x| {
-            x.stamps().iter().map(|x| { id_str!(x.stamp().id()) })
+            x.stamps().iter().map(|x| { id_str!(x.id()) })
         })
         .flatten()
         .collect::<Result<Vec<String>, String>>()
         .map_err(|e| format!("Error grabbing stamps for indexing: {:?}", e))?;
 
+    let serialized = transactions.serialize_binary()
+        .map_err(|e| format!("problem serializing identity {}", e))?;
     let conn = conn()?;
     conn.execute("BEGIN", params![]).map_err(|e| format!("Error saving identity: {:?}", e))?;
     conn.execute("DELETE FROM identities WHERE id = ?1", params![id_str])
         .map_err(|e| format!("Error saving identity: {:?}", e))?;
     conn.execute(
-        "INSERT INTO identities (id, nickname, created, data, name_lookup, email_lookup, claim_lookup, stamp_lookup) VALUES (?1, ?2, ?3, ?4, json(?5), json(?6), json(?7), json(?8))",
+        r#"
+            INSERT INTO identities
+            (id, nickname, created, data, name_lookup, email_lookup, claim_lookup, stamp_lookup)
+            VALUES (?1, ?2, ?3, ?4, json(?5), json(?6), json(?7), json(?8))
+        "#,
         params![
             id_str,
             nickname,
@@ -82,7 +85,7 @@ pub fn save_identity<T: Into<VersionedIdentity>>(identity: T) -> Result<(), Stri
 }
 
 /// Load an identity by ID.
-pub fn load_identity(id: &IdentityID) -> Result<Option<VersionedIdentity>, String> {
+pub fn load_identity(id: &IdentityID) -> Result<Option<Transactions>, String> {
     let conn = conn()?;
     let id_str = id_str!(id)?;
     let qry_res = conn.query_row(
@@ -97,16 +100,16 @@ pub fn load_identity(id: &IdentityID) -> Result<Option<VersionedIdentity>, Strin
     };
     match blob {
         Some(data) => {
-            let identity = VersionedIdentity::deserialize_binary(data.as_slice())
+            let transactions = Transactions::deserialize_binary(data.as_slice())
                 .map_err(|e| format!("Problem deserializing identity: {:?}", e))?;
-            Ok(Some(identity))
+            Ok(Some(transactions))
         }
         None => Ok(None),
     }
 }
 
 /// Load an identity by ID.
-pub fn load_identities_by_prefix(id_prefix: &str) -> Result<Vec<VersionedIdentity>, String> {
+pub fn load_identities_by_prefix(id_prefix: &str) -> Result<Vec<Transactions>, String> {
     let conn = conn()?;
     let mut stmt = conn.prepare("SELECT data FROM identities WHERE id like ?1 ORDER BY created ASC")
         .map_err(|e| format!("Error loading identities: {:?}", e))?;
@@ -115,7 +118,7 @@ pub fn load_identities_by_prefix(id_prefix: &str) -> Result<Vec<VersionedIdentit
     let mut identities = Vec::new();
     for data in rows {
         let data_bin: Vec<u8> = data.map_err(|e| format!("Error loading identity: {:?}", e))?;
-        let deserialized = VersionedIdentity::deserialize_binary(&data_bin)
+        let deserialized = Transactions::deserialize_binary(&data_bin)
             .map_err(|e| format!("Error deserializing identity: {:?}", e))?;
         identities.push(deserialized);
     }
@@ -123,7 +126,7 @@ pub fn load_identities_by_prefix(id_prefix: &str) -> Result<Vec<VersionedIdentit
 }
 
 /// List identities stored locally.
-pub fn list_local_identities(search: Option<&str>) -> Result<Vec<VersionedIdentity>, String> {
+pub fn list_local_identities(search: Option<&str>) -> Result<Vec<Transactions>, String> {
     let conn = conn()?;
     let qry = if search.is_some() {
         r#"
@@ -162,14 +165,14 @@ pub fn list_local_identities(search: Option<&str>) -> Result<Vec<VersionedIdenti
     let mut identities = Vec::new();
     for data in rows {
         let data_bin: Vec<u8> = data.map_err(|e| format!("Error loading identity: {:?}", e))?;
-        let deserialized = VersionedIdentity::deserialize_binary(&data_bin)
+        let deserialized = Transactions::deserialize_binary(&data_bin)
             .map_err(|e| format!("Error deserializing identity: {:?}", e))?;
         identities.push(deserialized);
     }
     Ok(identities)
 }
 
-pub fn find_identity_by_prefix(ty: &str, id_prefix: &str) -> Result<Option<VersionedIdentity>, String> {
+pub fn find_identity_by_prefix(ty: &str, id_prefix: &str) -> Result<Option<Transactions>, String> {
     let conn = conn()?;
     let qry = format!(r#"
         SELECT DISTINCT
@@ -196,9 +199,9 @@ pub fn find_identity_by_prefix(ty: &str, id_prefix: &str) -> Result<Option<Versi
     };
     match blob {
         Some(data) => {
-            let identity = VersionedIdentity::deserialize_binary(data.as_slice())
+            let transactions = Transactions::deserialize_binary(data.as_slice())
                 .map_err(|e| format!("Problem deserializing identity: {:?}", e))?;
-            Ok(Some(identity))
+            Ok(Some(transactions))
         }
         None => Ok(None),
     }

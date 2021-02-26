@@ -1,6 +1,8 @@
 use dirs;
 use stamp_core::{
     crypto::key::SecretKey,
+    dag::Transactions,
+    identity::Identity,
     util::Lockable,
 };
 use std::fs::File;
@@ -66,6 +68,11 @@ macro_rules! id_str_split {
             Err(..) => (String::from("<error serializing ID>"), String::from("<error serializing ID>")),
         }
     }
+}
+
+pub(crate) fn build_identity(transactions: &Transactions) -> Result<Identity, String> {
+    transactions.build_identity()
+        .map_err(|e| format!("Problem building identity: {:?}", e))
 }
 
 /// Grab a password and use it along with a timestamp to generate a master key.

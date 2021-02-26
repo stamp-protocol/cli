@@ -7,20 +7,22 @@ use indicatif::{ProgressBar, ProgressStyle};
 use prettytable::Table;
 use stamp_core::{
     crypto::key::{SecretKey, SignKeypair, CryptoKeypair},
-    identity::{Key, IdentityID, Identity, VersionedIdentity, ClaimSpec, PublishedIdentity},
+    dag::Transactions,
+    identity::{ExtendKeypair, AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair, Key, IdentityID, Identity, ClaimSpec, PublishedIdentity},
     private::{Private, MaybePrivate},
     util::{Timestamp, SerdeBinary},
 };
 use std::convert::TryFrom;
+use std::ops::Deref;
 
 fn passphrase_note() {
     util::print_wrapped("To protect your identity from unauthorized access, enter a long but memorable master passphrase. Choose something personal that is easy for you to remember but hard for someone else to guess.\n\n  Example: my dog butch has a friend named snow\n\nYou can change this later using the `stamp keychain passwd` command.\n\n");
 }
 
-fn prompt_claim_name_email(master_key: &SecretKey, id: Identity) -> Result<Identity, String> {
+fn prompt_claim_name_email(master_key: &SecretKey, transactions: Transactions) -> Result<Transactions, String> {
     println!("It's a good idea to associate your name and email with your identity.");
     if !util::yesno_prompt("Would you like to do this? [Y/n]", "y")? {
-        return Ok(id);
+        return Ok(transactions);
     }
     let name: String = dialoguer::Input::new()
         .with_prompt("Your full name")
@@ -30,16 +32,20 @@ fn prompt_claim_name_email(master_key: &SecretKey, id: Identity) -> Result<Ident
         .with_prompt("Your primary email")
         .interact_text()
         .map_err(|e| format!("Error grabbing email input: {:?}", e))?;
-    let id = id.make_claim(master_key, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public(name)))
-        .map_err(|e| format!("Error generating name claim: {:?}", e))?;
-    let id = id.make_claim(master_key, Timestamp::now(), ClaimSpec::Email(MaybePrivate::new_public(email)))
-        .map_err(|e| format!("Error generating email claim: {:?}", e))?;
-    Ok(id)
+    let transactions = transactions
+        .make_claim(master_key, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public(name)))
+        .map_err(|e| format!("Error generating name claim: {}", e))?
+        .make_claim(master_key, Timestamp::now(), ClaimSpec::Email(MaybePrivate::new_public(email)))
+        .map_err(|e| format!("Error generating email claim: {}", e))?;
+    Ok(transactions)
 }
 
-pub fn try_load_single_identity(id: &str) -> Result<VersionedIdentity, String> {
+pub fn try_load_single_identity(id: &str) -> Result<Transactions, String> {
     let identities = db::load_identities_by_prefix(id)?;
     if identities.len() > 1 {
+        let identities = identities.iter()
+            .map(|x| util::build_identity(&x))
+            .collect::<Result<Vec<_>, String>>()?;
         print_identities_table(&identities, false);
         Err(format!("Multiple identities matched that ID"))?;
     } else if identities.len() == 0 {
@@ -48,24 +54,28 @@ pub fn try_load_single_identity(id: &str) -> Result<VersionedIdentity, String> {
     Ok(identities[0].clone())
 }
 
-fn post_create(master_key: &SecretKey, identity: Identity) -> Result<(), String> {
+fn post_create(master_key: &SecretKey, transactions: Transactions) -> Result<(), String> {
     // ask if they want name/email claims, then add three default subkeys (sign,
     // crypto, secret) to their keychain.
     let subkey_sign = SignKeypair::new_ed25519(&master_key)
-        .map_err(|e| format!("Error generating subkey: {:?}", e))?;
+        .map_err(|e| format!("Error generating subkey: {}", e))?;
     let subkey_crypto = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key)
-        .map_err(|e| format!("Error generating subkey: {:?}", e))?;
+        .map_err(|e| format!("Error generating subkey: {}", e))?;
     let subkey_secret = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305())
-        .map_err(|e| format!("Error generating subkey: {:?}", e))?;
-    let identity = prompt_claim_name_email(&master_key, identity)?
-        .add_subkey(master_key, Key::new_sign(subkey_sign), "default:sign", Some("A default key for signing documents or messages."))
-        .map_err(|e| format!("Problem adding key to identity: {:?}", e))?
-        .add_subkey(master_key, Key::new_crypto(subkey_crypto), "default:crypto", Some("A default key for receiving private messages."))
-        .map_err(|e| format!("Problem adding key to identity: {:?}", e))?
-        .add_subkey(master_key, Key::new_secret(subkey_secret), "default:secret", Some("A default key allowing encryption/decryption of personal data."))
-        .map_err(|e| format!("Problem adding key to identity: {:?}", e))?;
+        .map_err(|e| format!("Error generating subkey: {}", e))?;
+    let identity = util::build_identity(&transactions)?;
+    let transactions = transactions
+        .make_claim(&master_key, Timestamp::now(), ClaimSpec::Identity(identity.id().clone()))
+        .map_err(|e| format!("Problem making identity claim: {}", e))?;
+    let transactions = prompt_claim_name_email(&master_key, transactions)?
+        .add_subkey(master_key, Timestamp::now(), Key::new_sign(subkey_sign), "default:sign", Some("A default key for signing documents or messages."))
+        .map_err(|e| format!("Problem adding key to identity: {}", e))?
+        .add_subkey(master_key, Timestamp::now(), Key::new_crypto(subkey_crypto), "default:crypto", Some("A default key for receiving private messages."))
+        .map_err(|e| format!("Problem adding key to identity: {}", e))?
+        .add_subkey(master_key, Timestamp::now(), Key::new_secret(subkey_secret), "default:secret", Some("A default key allowing encryption/decryption of personal data."))
+        .map_err(|e| format!("Problem adding key to identity: {}", e))?;
     let id_str = id_str!(identity.id())?;
-    db::save_identity(identity)?;
+    db::save_identity(transactions)?;
     let green = dialoguer::console::Style::new().green();
     let bold = dialoguer::console::Style::new().bold();
     println!("---\n{} The identity {} has been saved.", green.apply_to("Success!"), IdentityID::short(&id_str));
@@ -82,16 +92,23 @@ fn post_create(master_key: &SecretKey, identity: Identity) -> Result<(), String>
 
 pub(crate) fn create_new() -> Result<(), String> {
     passphrase_note();
-    let (identity, master_key) = util::with_new_passphrase("Your master passphrase", |master_key, now| {
-        let identity = Identity::new(master_key, now)
-            .map_err(|err| format!("Failed to create identity: {:?}", err))?;
-        Ok(identity)
+    let (transactions, master_key) = util::with_new_passphrase("Your master passphrase", |master_key, now| {
+        let mapper = |err| format!("Failed to create identity: {:?}", err);
+        let alpha = AlphaKeypair::new_ed25519(&master_key).map_err(mapper)?;
+        let policy = PolicyKeypair::new_ed25519(&master_key).map_err(mapper)?;
+        let publish = PublishKeypair::new_ed25519(&master_key).map_err(mapper)?;
+        let root = RootKeypair::new_ed25519(&master_key).map_err(mapper)?;
+        let transactions = Transactions::new()
+            .create_identity(&master_key, now.clone(), alpha, policy, publish, root).map_err(mapper)?;
+        Ok(transactions)
     }, None)?;
     println!("");
+    let identity = transactions.build_identity()
+        .map_err(|err| format!("Failed to build identity: {:?}", err))?;
     let id_str = id_str!(identity.id())?;
     println!("Generated a new identity with the ID {}", id_str);
     println!("");
-    post_create(&master_key, identity)?;
+    post_create(&master_key, transactions)?;
     Ok(())
 }
 
@@ -144,16 +161,23 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
         return true;
     };
 
-    let mut alpha_keypair;
-    let mut id;
     let mut now;
+    let mut transactions;
     let tmp_master_key = SecretKey::new_xsalsa20poly1305();
+    let policy_keypair = PolicyKeypair::new_ed25519(&tmp_master_key)
+        .map_err(|e| format!("Error generating policy keypair: {:?}", e))?;
+    let publish_keypair = PublishKeypair::new_ed25519(&tmp_master_key)
+        .map_err(|e| format!("Error generating publish keypair: {:?}", e))?;
+    let root_keypair = RootKeypair::new_ed25519(&tmp_master_key)
+        .map_err(|e| format!("Error generating root keypair: {:?}", e))?;
     loop {
         now = Timestamp::now();
-        alpha_keypair = SignKeypair::new_ed25519(&tmp_master_key)
+        let alpha_keypair = AlphaKeypair::new_ed25519(&tmp_master_key)
             .map_err(|e| format!("Error generating alpha keypair: {:?}", e))?;
-        id = Identity::create_id(&tmp_master_key, &alpha_keypair, &now)
-            .map_err(|e| format!("Error generating ID: {:?}", e))?;
+        transactions = Transactions::new()
+            .create_identity(&tmp_master_key, now.clone(), alpha_keypair, policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone())
+            .map_err(|e| format!("problem creating identity: {}", e))?;
+        let id = IdentityID::from(transactions.transactions()[0].id().deref().clone());
         let based = id_str!(&id)?;
         if filter(&based) {
             break;
@@ -162,16 +186,17 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
 
     passphrase_note();
     let (_, master_key) = util::with_new_passphrase("Your master passphrase", |_master_key, _now| { Ok(()) }, Some(now.clone()))?;
-    let alpha_keypair = alpha_keypair.reencrypt(&tmp_master_key, &master_key)
-        .map_err(|e| format!("Error re-keying alpha keypair: {:?}", e))?;
-    let identity = Identity::new_with_alpha_and_id(&master_key, now, alpha_keypair, id)
-        .map_err(|err| format!("Failed to create identity: {:?}", err))?;
-    post_create(&master_key, identity)?;
+    let transactions = transactions.reencrypt(&tmp_master_key, &master_key)
+        .map_err(|err| format!("Failed to create identity: {}", err))?;
+    post_create(&master_key, transactions)?;
     Ok(())
 }
 
 pub fn list(search: Option<&str>, verbose: bool) -> Result<(), String> {
-    let identities = db::list_local_identities(search)?;
+    let identities = db::list_local_identities(search)?
+        .iter()
+        .map(|x| util::build_identity(&x))
+        .collect::<Result<Vec<_>, String>>()?;
     print_identities_table(&identities, verbose);
     Ok(())
 }
@@ -179,33 +204,35 @@ pub fn list(search: Option<&str>, verbose: bool) -> Result<(), String> {
 pub fn import(location: &str) -> Result<(), String> {
     let contents = util::load_file(location)?;
     // first try importing an owned identity
-    let imported = VersionedIdentity::deserialize_binary(contents.as_slice())
+    let imported = Transactions::deserialize_binary(contents.as_slice())
         .or_else(|_| {
             PublishedIdentity::deserialize(contents.as_slice())
                 .map(|x| x.identity().clone())
         })
         .map_err(|e| format!("Problem loading identity: {:?}", e))?;
-    let exists = db::load_identity(imported.id())?;
+    let identity = util::build_identity(&imported)?;
+    let exists = db::load_identity(identity.id())?;
     if let Some(existing) = exists {
-        if existing.is_owned() && !imported.is_owned() {
+        if existing.is_owned() && !identity.is_owned() {
             Err(format!("You are attempting to overwrite an existing owned identity with a public identity, which will erase all of your private data."))?;
         }
         if !util::yesno_prompt("The identity you're importing already exists locally. Overwrite? [y/N]", "n")? {
             return Ok(());
         }
     }
-    let id_str = id_str!(imported.id())?;
+    let id_str = id_str!(identity.id())?;
     db::save_identity(imported)?;
     println!("Imported identity {}", id_str);
     Ok(())
 }
 
 pub fn publish(id: &str) -> Result<String, String> {
-    let identity = try_load_single_identity(id)?;
+    let transactions = try_load_single_identity(id)?;
+    let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     let now = Timestamp::now();
-    let published = PublishedIdentity::publish(&master_key, now, identity)
+    let published = PublishedIdentity::publish(&master_key, now, transactions)
         .map_err(|e| format!("Error creating published identity: {:?}", e))?;
     let serialized = published.serialize()
         .map_err(|e| format!("Error serializing identity: {:?}", e))?;
@@ -224,6 +251,9 @@ pub fn delete(search: &str, skip_confirm: bool, verbose: bool) -> Result<(), Str
     if identities.len() == 0 {
         Err(format!("No identities match that search"))?;
     }
+    let identities = identities.into_iter()
+        .map(|x| util::build_identity(&x))
+        .collect::<Result<Vec<_>, String>>()?;
     print_identities_table(&identities, verbose);
     if !skip_confirm {
         let msg = format!("Permanently delete these {} identities? [y/N]", identities.len());
@@ -243,19 +273,23 @@ pub fn delete(search: &str, skip_confirm: bool, verbose: bool) -> Result<(), Str
 pub fn view(search: &str) -> Result<String, String> {
     let identities = db::list_local_identities(Some(search))?;
     if identities.len() > 1 {
+        let identities = identities.iter()
+            .map(|x| util::build_identity(&x))
+            .collect::<Result<Vec<_>, String>>()?;
         print_identities_table(&identities, false);
         Err(format!("Multiple identities matched that search"))?;
     } else if identities.len() == 0 {
         Err(format!("No identities match that search"))?;
     }
-    let identity = identities[0].clone();
+    let transactions = identities[0].clone();
+    let identity = util::build_identity(&transactions)?;
     let serialized = identity.serialize()
         .map_err(|e| format!("Problem serializing identity: {:?}", e))?;
     Ok(serialized)
 }
 
 /// Output a table of identities.
-pub fn print_identities_table(identities: &Vec<VersionedIdentity>, verbose: bool) {
+pub fn print_identities_table(identities: &Vec<Identity>, verbose: bool) {
     let mut table = Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
     let id_field = if verbose { "ID" } else { "ID (short)" };

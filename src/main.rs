@@ -433,10 +433,6 @@ fn run() -> Result<(), String> {
                         .about("List the keys in a keychain.")
                         .setting(AppSettings::DisableVersion)
                         .arg(id_arg("The ID of the identity we want to list keys for. This overrides the configured default identity."))
-                        .arg(Arg::with_name("verbose")
-                                .short("v")
-                                .long("verbose")
-                                .help("Verbose output, with long-form IDs."))
                         .arg(Arg::with_name("SEARCH")
                                 .index(1)
                                 .help("The ID or name of the key(s) we're searching for."))
@@ -624,7 +620,7 @@ fn run() -> Result<(), String> {
                         .arg(Arg::with_name("attached")
                                 .short("a")
                                 .long("attached")
-                                .help("If set, the message body will be appended to the signature. This allows you to send a message and the signature of that message together. The default is to generate a detached signature that much be published alongside the message."))
+                                .help("If set, the message body will be appended to the signature. This allows you to send a message and the signature of that message together. The default is to generate a detached signature that must be published alongside the message."))
                         .arg(Arg::with_name("base64")
                                 .short("b")
                                 .long("base64")
@@ -669,12 +665,6 @@ fn run() -> Result<(), String> {
                 .about("Tools for Stamp development. Will change rapidly and unexpectedly, so don't rely on these too heavily.")
                 .setting(AppSettings::DisableVersion)
                 .setting(AppSettings::SubcommandRequiredElseHelp)
-                .subcommand(
-                    SubCommand::with_name("root-sig")
-                        .setting(AppSettings::DisableVersion)
-                        .about("Regenerate the root signature on an identity. This should only ever be needed if the root signature algorithm changes or there's a bug in the implementation, causing it to not be set correctly.")
-                        .arg(id_arg("The ID of the identity we want to re-sign. This overrides the configured default identity."))
-                )
                 .subcommand(
                     SubCommand::with_name("resave")
                         .setting(AppSettings::DisableVersion)
@@ -872,8 +862,7 @@ fn run() -> Result<(), String> {
                 ("list", Some(args)) => {
                     let id = id_val(args)?;
                     let search = args.value_of("SEARCH");
-                    let verbose = args.is_present("verbose");
-                    commands::keychain::list(&id, search, verbose)?;
+                    commands::keychain::list(&id, search)?;
                 }
                 ("update", Some(args)) => {
                     let id = id_val(args)?;
@@ -979,11 +968,6 @@ fn run() -> Result<(), String> {
         }
         ("debug", Some(args)) => {
             match args.subcommand() {
-                ("root-sig", Some(args)) => {
-                    // no default here, debug commands should be explicit
-                    let id = args.value_of("identity").ok_or(format!("Must specify an ID"))?;
-                    commands::debug::root_sig(id)?;
-                }
                 ("resave", Some(args)) => {
                     // no default here, debug commands should be explicit
                     let id = args.value_of("identity").ok_or(format!("Must specify an ID"))?;
