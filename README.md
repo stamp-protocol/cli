@@ -13,6 +13,7 @@ First, install rust 1.48+ and cargo. Then grab the core and the cli and build th
 mkdir stamp
 cd stamp
 git clone https://github.com/stamp-protocol/core.git
+git clone https://github.com/stamp-protocol/aux.git
 git clone https://github.com/stamp-protocol/cli.git
 cd cli
 make
