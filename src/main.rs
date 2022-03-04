@@ -661,6 +661,28 @@ fn run() -> Result<(), String> {
                 )
         )
         .subcommand(
+            SubCommand::with_name("dag")
+                .about("Interact with an identity's DAG directly.")
+                .setting(AppSettings::DisableVersion)
+                .setting(AppSettings::SubcommandRequiredElseHelp)
+                .subcommand(
+                    SubCommand::with_name("list")
+                        .setting(AppSettings::DisableVersion)
+                        .about("List the transactions in an identity.")
+                        .arg(id_arg("The ID of the identity we want to see transactions for. This overrides the configured default identity."))
+                )
+                .subcommand(
+                    SubCommand::with_name("reset")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Roll back an identity to a previous state.")
+                        .arg(id_arg("The ID of the identity we want to reset. This overrides the configured default identity."))
+                        .arg(Arg::with_name("TXID")
+                                .required(true)
+                                .index(1)
+                                .help("A transaction ID we wish to reset to. This transaction will be included in the final identity."))
+                )
+        )
+        .subcommand(
             SubCommand::with_name("debug")
                 .about("Tools for Stamp development. Will change rapidly and unexpectedly, so don't rely on these too heavily.")
                 .setting(AppSettings::DisableVersion)
@@ -962,6 +984,20 @@ fn run() -> Result<(), String> {
                     let search = args.value_of("SEARCH")
                         .ok_or(format!("Must specify a search value"))?;
                     commands::config::set_default(search)?;
+                }
+                _ => println!("{}", args.usage()),
+            }
+        }
+        ("dag", Some(args)) => {
+            match args.subcommand() {
+                ("list", Some(args)) => {
+                    let id = id_val(args)?;
+                    commands::dag::list(&id)?;
+                }
+                ("reset", Some(args)) => {
+                    let id = id_val(args)?;
+                    let txid = args.value_of("TXID").ok_or(format!("Must specify a TXID"))?;
+                    commands::dag::reset(&id, txid)?;
                 }
                 _ => println!("{}", args.usage()),
             }
