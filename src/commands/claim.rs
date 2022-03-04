@@ -1,4 +1,4 @@
-use aux;
+use stamp_aux;
 use crate::{
     commands::id,
     db,
@@ -14,14 +14,12 @@ use stamp_core::{
         ClaimSpec,
         ClaimContainer,
         IdentityID,
-        Relationship,
         RelationshipType,
     },
     private::MaybePrivate,
-    util::{Timestamp, Date, Public},
+    util::{Date, Public},
 };
 use std::convert::TryFrom;
-use std::str::FromStr;
 use url::Url;
 
 fn prompt_claim_value(prompt: &str) -> Result<String, String> {
@@ -32,162 +30,20 @@ fn prompt_claim_value(prompt: &str) -> Result<String, String> {
     Ok(value)
 }
 
-fn claim_pre(id: &str, prompt: &str) -> Result<(SecretKey, Transactions, String), String> {
+pub(crate) fn claim_pre_noval(id: &str) -> Result<(SecretKey, Transactions), String> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
     let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     transactions.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+    Ok((master_key, transactions))
+}
+
+pub(crate) fn claim_pre(id: &str, prompt: &str) -> Result<(SecretKey, Transactions, String), String> {
+    let (master_key, transactions) = claim_pre_noval(id)?;
     let value = prompt_claim_value(prompt)?;
     Ok((master_key, transactions, value))
-}
-
-fn claim_post(master_key: &SecretKey, transactions: Transactions, spec: ClaimSpec) -> Result<(), String> {
-    let transactions = transactions.make_claim(&master_key, Timestamp::now(), spec)
-        .map_err(|e| format!("There was a problem adding the claim to your identity: {:?}", e))?;
-    db::save_identity(transactions)?;
-    println!("Claim added!");
-    Ok(())
-}
-
-fn maybe_private<T>(master_key: &SecretKey, private: bool, value: T) -> Result<MaybePrivate<T>, String>
-    where T: Clone + serde::ser::Serialize + serde::de::DeserializeOwned
-{
-    let maybe = if private {
-        MaybePrivate::new_private(&master_key, value)
-            .map_err(|e| format!("There was a problem creating the private claim: {:?}", e))?
-    } else {
-        MaybePrivate::new_public(value)
-    };
-    Ok(maybe)
-}
-
-pub fn new_id(id: &str) -> Result<(), String> {
-    let (master_key, transactions, value) = claim_pre(id, "Enter the ID of your other identity")?;
-    let id = IdentityID::try_from(value.as_str())
-        .map_err(|e| format!("Couldn't read id {}: {:?}", value, e))?;
-    let spec = ClaimSpec::Identity(id);
-    claim_post(&master_key, transactions, spec)?;
-    Ok(())
-}
-
-pub fn new_name(id: &str, private: bool) -> Result<(), String> {
-    let (master_key, transactions, value) = claim_pre(id, "Enter your name")?;
-    let maybe = maybe_private(&master_key, private, value)?;
-    let spec = ClaimSpec::Name(maybe);
-    claim_post(&master_key, transactions, spec)?;
-    Ok(())
-}
-
-pub fn new_birthday(id: &str, private: bool) -> Result<(), String> {
-    let (master_key, transactions, value) = claim_pre(id, "Enter your date of birth (eg 1987-11-23)")?;
-    let dob = Date::from_str(&value)
-        .map_err(|e| format!("Could not read that date format: {}", e))?;
-    let maybe = maybe_private(&master_key, private, dob)?;
-    let spec = ClaimSpec::Birthday(maybe);
-    claim_post(&master_key, transactions, spec)?;
-    Ok(())
-}
-
-pub fn new_email(id: &str, private: bool) -> Result<(), String> {
-    let (master_key, transactions, value) = claim_pre(id, "Enter your email")?;
-    let maybe = maybe_private(&master_key, private, value)?;
-    let spec = ClaimSpec::Email(maybe);
-    claim_post(&master_key, transactions, spec)?;
-    Ok(())
-}
-
-pub fn new_photo(id: &str, photofile: &str, private: bool) -> Result<(), String> {
-    let transactions = id::try_load_single_identity(id)?;
-    let identity = util::build_identity(&transactions)?;
-    let id_str = id_str!(identity.id())?;
-    let photo_bytes = util::read_file(photofile)?;
-    const CUTOFF: usize = 1024 * 8;
-    if photo_bytes.len() > (1024 * 8) {
-        Err(format!("Please choose a photo smaller than {} bytes (given photo is {} bytes)", CUTOFF, photo_bytes.len()))?;
-    }
-    let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
-    transactions.test_master_key(&master_key)
-        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
-
-    let maybe = maybe_private(&master_key, private, ClaimBin::from(photo_bytes))?;
-    let spec = ClaimSpec::Photo(maybe);
-    claim_post(&master_key, transactions, spec)?;
-    Ok(())
-}
-
-pub fn new_pgp(id: &str, private: bool) -> Result<(), String> {
-    let (master_key, transactions, value) = claim_pre(id, "Enter your PGP ID")?;
-    let maybe = maybe_private(&master_key, private, value)?;
-    let spec = ClaimSpec::Pgp(maybe);
-    claim_post(&master_key, transactions, spec)?;
-    Ok(())
-}
-
-pub fn new_domain(id: &str, private: bool) -> Result<(), String> {
-    let (master_key, transactions, value) = claim_pre(id, "Enter your domain name")?;
-    let maybe = maybe_private(&master_key, private, value.clone())?;
-    let spec = ClaimSpec::Domain(maybe);
-    if private {
-        claim_post(&master_key, transactions, spec)?;
-    } else {
-        let transactions = transactions.make_claim(&master_key, Timestamp::now(), spec)
-            .map_err(|e| format!("There was a problem adding the claim to your identity: {:?}", e))?;
-        let identity_mod = util::build_identity(&transactions)?;
-        let claim = identity_mod.claims().iter().last().ok_or(format!("Unable to find created claim"))?;
-        let instant_values = claim.claim().instant_verify_allowed_values(identity_mod.id())
-            .map_err(|e| format!("Problem grabbing allowed claim values: {}", e))?;
-        db::save_identity(transactions)?;
-        println!("{}", util::text_wrap(&format!("Claim added! You can finalize this claim and make it verifiable instantly to others by adding a DNS TXT record to the domain {} to contain one of the following two values:\n\n", value)));
-        println!("  {}\n  {}\n", instant_values[0], instant_values[1]);
-    }
-    Ok(())
-}
-
-pub fn new_url(id: &str, private: bool) -> Result<(), String> {
-    let (master_key, transactions, value) = claim_pre(id, "Enter the URL you own")?;
-    let url = url::Url::parse(&value)
-        .map_err(|e| format!("Failed to parse URL: {}", e))?;
-    let maybe = maybe_private(&master_key, private, url)?;
-    let spec = ClaimSpec::Url(maybe);
-    if private {
-        claim_post(&master_key, transactions, spec)?;
-    } else {
-        let transactions = transactions.make_claim(&master_key, Timestamp::now(), spec)
-            .map_err(|e| format!("There was a problem adding the claim to your identity: {:?}", e))?;
-        let identity_mod = util::build_identity(&transactions)?;
-        let claim = identity_mod.claims().iter().last().ok_or(format!("Unable to find created claim"))?;
-        let instant_values = claim.claim().instant_verify_allowed_values(identity_mod.id())
-            .map_err(|e| format!("Problem grabbing allowed claim values: {}", e))?;
-        db::save_identity(transactions)?;
-        println!("{}", util::text_wrap(&format!("Claim added! You can finalize this claim and make it verifiable instantly to others by updating the URL {} to contain one of the following two values:\n\n", value)));
-        println!("  {}\n  {}\n", instant_values[0], instant_values[1]);
-    }
-    Ok(())
-}
-
-pub fn new_address(id: &str, private: bool) -> Result<(), String> {
-    let (master_key, transactions, value) = claim_pre(id, "Enter your address")?;
-    let maybe = maybe_private(&master_key, private, value)?;
-    let spec = ClaimSpec::HomeAddress(maybe);
-    claim_post(&master_key, transactions, spec)?;
-    Ok(())
-}
-
-pub fn new_relation(id: &str, ty: &str, private: bool) -> Result<(), String> {
-    let (master_key, transactions, value) = claim_pre(id, "Enter the identity ID of the relation")?;
-    let rel_id = IdentityID::try_from(value.as_str())
-        .map_err(|e| format!("Couldn't read id {}: {:?}", value, e))?;
-    let reltype = match ty {
-        "org" => RelationshipType::OrganizationMember,
-        _ => Err(format!("Invalid relationship type: {}", ty))?,
-    };
-    let relationship = Relationship::new(reltype, rel_id);
-    let maybe = maybe_private(&master_key, private, relationship)?;
-    let spec = ClaimSpec::Relation(maybe);
-    claim_post(&master_key, transactions, spec)?;
-    Ok(())
 }
 
 fn unwrap_maybe<T, F>(maybe: &MaybePrivate<T>, masterkey_fn: F) -> Result<T, String>
@@ -214,7 +70,7 @@ pub fn check(claim_id: &str) -> Result<(), String> {
         .find(|x| id_str!(x.claim().id()).map(|x| x.starts_with(claim_id)) == Ok(true))
         .ok_or(format!("Couldn't find the claim {} in identity {}", claim_id, IdentityID::short(&id_str)))?;
     let claim_id_str = id_str!(claim.claim().id())?;
-    match aux::check(identity.id(), claim.claim()) {
+    match stamp_aux::claim::check_claim(&transactions, claim.claim()) {
         Ok(url) => {
             let green = dialoguer::console::Style::new().green();
             println!("\nThe claim {} has been {}!\n", ClaimID::short(&claim_id_str), green.apply_to("verified"));
@@ -224,7 +80,7 @@ pub fn check(claim_id: &str) -> Result<(), String> {
         Err(err) => {
             let red = dialoguer::console::Style::new().red();
             println!("\nThe claim {} {}\n", ClaimID::short(&claim_id_str), red.apply_to("could not be verified"));
-            Err(err)
+            Err(format!("{}", err))
         }
     }
 }
@@ -303,29 +159,6 @@ pub fn list(id: &str, private: bool, verbose: bool) -> Result<(), String> {
         None
     };
     print_claims_table(identity.claims(), master_key_maybe, verbose);
-    Ok(())
-}
-
-pub fn delete(id: &str, claim_id: &str) -> Result<(), String> {
-    let transactions = id::try_load_single_identity(id)?;
-    let identity = util::build_identity(&transactions)?;
-    let mut found: Option<ClaimContainer> = None;
-    for claim in identity.claims() {
-        let id_str = id_str!(claim.claim().id())?;
-        if id_str.starts_with(claim_id) {
-            found = Some(claim.clone());
-            break;
-        }
-    }
-    let claim = found.ok_or(format!("Cannot find the claim {} in identity {}", claim_id, id))?;
-    if !util::yesno_prompt(&format!("Really delete the claim {} and all of its stamps? [y/N]", claim_id), "n")? {
-        return Ok(());
-    }
-    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
-    let transactions_mod = transactions.delete_claim(&master_key, Timestamp::now(), claim.claim().id().clone())
-        .map_err(|e| format!("There was a problem removing the claim: {:?}", e))?;
-    db::save_identity(transactions_mod)?;
-    println!("Claim removed!");
     Ok(())
 }
 

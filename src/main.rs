@@ -7,9 +7,14 @@ mod config;
 mod db;
 
 use clap::{Arg, App, AppSettings, ArgMatches, SubCommand};
+use stamp_aux;
 use stamp_core::{
-    identity::IdentityID,
+    identity::{
+        IdentityID,
+        RelationshipType,
+    },
 };
+use std::convert::TryFrom;
 
 fn run() -> Result<(), String> {
     let conf = config::load()?;
@@ -699,7 +704,21 @@ fn run() -> Result<(), String> {
         ("id", Some(args)) => {
             match args.subcommand() {
                 ("new", _) => {
-                    commands::id::create_new()?;
+                    crate::commands::id::passphrase_note();
+                    let (transactions, master_key) = util::with_new_passphrase("Your master passphrase", |master_key, now| {
+                        stamp_aux::id::new(&master_key, now)
+                            .map_err(|e| format!("Error creating identity: {}", e))
+                    }, None)?;
+                    println!("");
+                    let identity = transactions.build_identity()
+                        .map_err(|err| format!("Failed to build identity: {:?}", err))?;
+                    let id_str = id_str!(identity.id())?;
+                    println!("Generated a new identity with the ID {}", id_str);
+                    println!("");
+                    let (name, email) = crate::commands::id::prompt_name_email()?;
+                    let transactions = stamp_aux::id::post_new_id(&master_key, transactions, name, email)
+                        .map_err(|e| format!("Error finalizing identity: {}", e))?;
+                    crate::commands::id::post_create(&transactions)?;
                 }
                 ("vanity", Some(args)) => {
                     let regex = args.value_of("regex");
@@ -713,17 +732,43 @@ fn run() -> Result<(), String> {
                         println!("{}", args.usage());
                         return Ok(());
                     }
-                    commands::id::create_vanity(regex, contains, prefix)?;
+
+                    let (tmp_master_key, transactions, now) = commands::id::create_vanity(regex, contains, prefix)?;
+                    crate::commands::id::passphrase_note();
+                    let (_, master_key) = util::with_new_passphrase("Your master passphrase", |_master_key, _now| { Ok(()) }, Some(now.clone()))?;
+                    let transactions = transactions.reencrypt(&tmp_master_key, &master_key)
+                        .map_err(|err| format!("Failed to create identity: {}", err))?;
+                    let (name, email) = crate::commands::id::prompt_name_email()?;
+                    let transactions = stamp_aux::id::post_new_id(&master_key, transactions, name, email)
+                        .map_err(|e| format!("Error finalizing identity: {}", e))?;
+                    crate::commands::id::post_create(&transactions)?;
                 }
                 ("list", Some(args)) => {
                     let search = args.value_of("SEARCH");
                     let verbose = args.is_present("verbose");
-                    commands::id::list(search, verbose)?;
+
+                    let identities = db::list_local_identities(search)?
+                        .iter()
+                        .map(|x| util::build_identity(&x))
+                        .collect::<Result<Vec<_>, String>>()?;
+                    crate::commands::id::print_identities_table(&identities, verbose);
                 }
                 ("import", Some(args)) => {
                     let location = args.value_of("LOCATION")
                         .ok_or(format!("Must specify a location value"))?;
-                    commands::id::import(location)?;
+
+                    let contents = util::load_file(location)?;
+                    let (transactions, existing) = stamp_aux::id::import_pre(contents.as_slice())
+                        .map_err(|e| format!("Error importing identity: {}", e))?;
+                    let identity = util::build_identity(&transactions)?;
+                    if existing.is_some() {
+                        if !util::yesno_prompt("The identity you're importing already exists locally. Overwrite? [y/N]", "n")? {
+                            return Ok(());
+                        }
+                    }
+                    let id_str = id_str!(identity.id())?;
+                    db::save_identity(transactions)?;
+                    println!("Imported identity {}", id_str);
                 }
                 ("publish", Some(args)) => {
                     let id = id_val(args)?;
@@ -754,60 +799,112 @@ fn run() -> Result<(), String> {
             }
         }
         ("claim", Some(args)) => {
+            macro_rules! aux_op {
+                ($op:expr) => {
+                    $op.map_err(|e| format!("Problem adding claim: {}", e))
+                }
+            }
             match args.subcommand() {
                 ("new", Some(args)) => {
                     match args.subcommand() {
                         ("identity", Some(args)) => {
                             let id = id_val(args)?;
-                            commands::claim::new_id(&id)?;
+                            let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter the ID of your other identity")?;
+                            aux_op!(stamp_aux::claim::new_id(&master_key, transactions, value))?;
+                            println!("Claim added!");
                         }
                         ("name", Some(args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
-                            commands::claim::new_name(&id, private)?;
+                            let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter your name")?;
+                            aux_op!(stamp_aux::claim::new_name(&master_key, transactions, value, private))?;
+                            println!("Claim added!");
                         }
                         ("birthday", Some(args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
-                            commands::claim::new_birthday(&id, private)?;
+                            let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter your date of birth (eg 1987-11-23)")?;
+                            aux_op!(stamp_aux::claim::new_birthday(&master_key, transactions, value, private))?;
+                            println!("Claim added!");
                         }
                         ("email", Some(args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
-                            commands::claim::new_email(&id, private)?;
+                            let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter your email")?;
+                            aux_op!(stamp_aux::claim::new_email(&master_key, transactions, value, private))?;
+                            println!("Claim added!");
                         }
                         ("photo", Some(args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
-                            let photo = args.value_of("PHOTO")
+                            let photofile = args.value_of("PHOTO")
                                 .ok_or(format!("Must specify a photo"))?;
-                            commands::claim::new_photo(&id, photo, private)?;
+
+                            let photo_bytes = util::read_file(photofile)?;
+                            if photo_bytes.len() > stamp_aux::claim::MAX_PHOTO_BYTES {
+                                Err(format!("Please choose a photo smaller than {} bytes (given photo is {} bytes)", stamp_aux::claim::MAX_PHOTO_BYTES, photo_bytes.len()))?;
+                            }
+                            let (master_key, transactions) = commands::claim::claim_pre_noval(&id)?;
+                            aux_op!(stamp_aux::claim::new_photo(&master_key, transactions, photo_bytes, private))?;
+                            println!("Claim added!");
                         }
                         ("pgp", Some(args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
-                            commands::claim::new_pgp(&id, private)?;
+                            let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter your PGP ID")?;
+                            aux_op!(stamp_aux::claim::new_pgp(&master_key, transactions, value, private))?;
+                            println!("Claim added!");
                         }
                         ("domain", Some(args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
-                            commands::claim::new_domain(&id, private)?;
+                            let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter your domain name")?;
+                            let transactions = aux_op!(stamp_aux::claim::new_domain(&master_key, transactions, value.clone(), private))?;
+                            if private {
+                                println!("Claim added!");
+                            } else {
+                                let identity_mod = util::build_identity(&transactions)?;
+                                let claim = identity_mod.claims().iter().last().ok_or(format!("Unable to find created claim"))?;
+                                let instant_values = claim.claim().instant_verify_allowed_values(identity_mod.id())
+                                    .map_err(|e| format!("Problem grabbing allowed claim values: {}", e))?;
+                                println!("{}", util::text_wrap(&format!("Claim added! You can finalize this claim and make it verifiable instantly to others by adding a DNS TXT record to the domain {} to contain one of the following two values:\n", value)));
+                                println!("  {}\n  {}\n", instant_values[0], instant_values[1]);
+                            }
                         }
                         ("url", Some(args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
-                            commands::claim::new_url(&id, private)?;
+                            let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter the URL you own")?;
+                            let transactions = aux_op!(stamp_aux::claim::new_url(&master_key, transactions, value.clone(), private))?;
+                            if private {
+                                println!("Claim added!");
+                            } else {
+                                let identity_mod = util::build_identity(&transactions)?;
+                                let claim = identity_mod.claims().iter().last().ok_or(format!("Unable to find created claim"))?;
+                                let instant_values = claim.claim().instant_verify_allowed_values(identity_mod.id())
+                                    .map_err(|e| format!("Problem grabbing allowed claim values: {}", e))?;
+                                println!("{}", util::text_wrap(&format!("Claim added! You can finalize this claim and make it verifiable instantly to others by updating the URL {} to contain one of the following two values:\n", value)));
+                                println!("  {}\n  {}\n", instant_values[0], instant_values[1]);
+                            }
                         }
                         ("address", Some(args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
-                            commands::claim::new_address(&id, private)?;
+                            let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter your address")?;
+                            aux_op!(stamp_aux::claim::new_address(&master_key, transactions, value, private))?;
+                            println!("Claim added!");
                         }
                         ("relation", Some(args)) => {
                             let id = id_val(args)?;
                             let ty = args.value_of("TYPE").ok_or(format!("Must specify a relationship type"))?;
                             let private = args.is_present("private");
-                            commands::claim::new_relation(&id, ty, private)?;
+                            let reltype = match ty {
+                                "org" => RelationshipType::OrganizationMember,
+                                _ => Err(format!("Invalid relationship type: {}", ty))?,
+                            };
+                            let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter your address")?;
+                            aux_op!(stamp_aux::claim::new_relation(&master_key, transactions, reltype, value, private))?;
+                            println!("Claim added!");
                         }
                         _ => println!("{}", args.usage()),
                     }
@@ -834,7 +931,14 @@ fn run() -> Result<(), String> {
                     let id = id_val(args)?;
                     let claim_id = args.value_of("CLAIM")
                         .ok_or(format!("Must specify a claim ID"))?;
-                    commands::claim::delete(&id, claim_id)?;
+                    let transactions = commands::id::try_load_single_identity(&id)?;
+                    let identity = util::build_identity(&transactions)?;
+                    if !util::yesno_prompt(&format!("Really delete the claim {} and all of its stamps? [y/N]", claim_id), "n")? {
+                        return Ok(());
+                    }
+                    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&id)), identity.created())?;
+                    aux_op!(stamp_aux::claim::delete(&master_key, transactions, &claim_id))?;
+                    println!("Claim removed!");
                 }
                 _ => println!("{}", args.usage()),
             }
