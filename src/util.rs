@@ -1,30 +1,11 @@
-use dirs;
 use stamp_core::{
-    crypto::key::SecretKey,
+    crypto::key::{KDF_OPS_MODERATE, KDF_MEM_MODERATE, SecretKey},
     dag::Transactions,
     identity::Identity,
-    util::Lockable,
 };
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
-use std::path::PathBuf;
 use textwrap;
-
-pub fn data_dir() -> Result<PathBuf, String> {
-    let mut dir = dirs::data_dir()
-        .or_else(|| dirs::home_dir().map(|mut x| { x.push(".stamp"); x }))
-        .ok_or(String::from("Cannot find user's home or data directory."))?;
-    dir.push("stamp");
-    Ok(dir)
-}
-
-pub fn config_dir() -> Result<PathBuf, String> {
-    let mut dir = dirs::config_dir()
-        .or_else(|| dirs::home_dir().map(|mut x| { x.push(".stamp"); x }))
-        .ok_or(String::from("Cannot find user's home or data directory."))?;
-    dir.push("stamp");
-    Ok(dir)
-}
 
 pub(crate) fn term_maxwidth() -> usize { 120 }
 
@@ -75,46 +56,36 @@ pub(crate) fn build_identity(transactions: &Transactions) -> Result<Identity, St
         .map_err(|e| format!("Problem building identity: {:?}", e))
 }
 
-/// Grab a password and use it along with a timestamp to generate a master key.
-pub(crate) fn passphrase_prompt<T: Into<String>>(prompt: T, now: &stamp_core::util::Timestamp) -> Result<SecretKey, String> {
-    let mut passphrase = dialoguer::Password::new().with_prompt(prompt).interact()
-        .map_err(|err| format!("There was an error grabbing your passphrase: {:?}", err))?;
-    passphrase.mem_lock().map_err(|_| format!("Unable to lock memory for passphrase."))?;
+fn derive_master(passphrase: &str, now: &stamp_core::util::Timestamp) -> Result<SecretKey, String> {
     let salt_bytes = stamp_core::util::hash(format!("{}", now.format("%+")).as_bytes())
         .map_err(|err| format!("Error deriving master key salt: {:?}", err))?;
-    let mut master_key = stamp_core::crypto::key::derive_master_key(passphrase.as_bytes(), salt_bytes.as_ref(), 2, 67108864)
+    let master_key = stamp_core::crypto::key::derive_master_key(passphrase.as_bytes(), salt_bytes.as_ref(), KDF_OPS_MODERATE, KDF_MEM_MODERATE)
         .map_err(|err| format!("Problem generating master key: {:?}", err))?;
-    master_key.mem_lock()
-        .map_err(|_| format!("Unable to lock memory for master key."))?;
-    passphrase.mem_unlock().map_err(|_| format!("Unable to unlock passphrase memory."))?;
     Ok(master_key)
+}
+
+/// Grab a password and use it along with a timestamp to generate a master key.
+pub(crate) fn passphrase_prompt<T: Into<String>>(prompt: T, now: &stamp_core::util::Timestamp) -> Result<SecretKey, String> {
+    let passphrase = dialoguer::Password::new().with_prompt(prompt).interact()
+        .map_err(|err| format!("There was an error grabbing your passphrase: {:?}", err))?;
+    derive_master(&passphrase, now)
 }
 
 pub(crate) fn with_new_passphrase<F, T>(prompt: &str, gen_fn: F, now: Option<stamp_core::util::Timestamp>) -> Result<(T, SecretKey), String>
     where F: FnOnce(&stamp_core::crypto::key::SecretKey, stamp_core::util::Timestamp) -> Result<T, String>,
 {
-    let mut passphrase = dialoguer::Password::new().with_prompt(prompt).interact()
+    let passphrase = dialoguer::Password::new().with_prompt(prompt).interact()
         .map_err(|err| format!("There was an error grabbing your passphrase: {:?}", err))?;
-    let mut confirm = dialoguer::Password::new().with_prompt("Confirm passphrase").interact()
+    let confirm = dialoguer::Password::new().with_prompt("Confirm passphrase").interact()
         .map_err(|err| format!("There was an error grabbing your confirmation: {:?}", err))?;
-    passphrase.mem_lock().map_err(|_| format!("Unable to lock memory for passphrase."))?;
-    confirm.mem_lock().map_err(|_| format!("Unable to lock memory for confirmation."))?;
     if passphrase != confirm {
         if yesno_prompt("Passphrase and confirmation do not match. Try again? [Y/n]", "y")? {
             return with_new_passphrase(prompt, gen_fn, now);
         }
         return Err(String::from("Passphrase mismatch"));
     }
-    confirm.mem_unlock().map_err(|_| format!("Unable to unlock confirmation memory."))?;
     let now = now.unwrap_or_else(|| stamp_core::util::Timestamp::now());
-    let salt_bytes = stamp_core::util::hash(format!("{}", now.format("%+")).as_bytes())
-        .map_err(|err| format!("Error deriving master key salt: {:?}", err))?;
-    let mut master_key = stamp_core::crypto::key::derive_master_key(passphrase.as_bytes(), salt_bytes.as_ref(), 2, 67108864)
-        .map_err(|err| format!("Problem generating master key: {:?}", err))?;
-    master_key.mem_lock()
-        .map_err(|_| format!("Unable to lock memory for master key."))?;
-    passphrase.mem_unlock().map_err(|_| format!("Unable to unlock passphrase memory."))?;
-
+    let master_key = derive_master(&passphrase, &now)?;
     let res = gen_fn(&master_key, now);
     Ok((res?, master_key))
 }

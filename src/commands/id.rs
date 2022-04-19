@@ -1,19 +1,16 @@
 use crate::{
-    config,
     db,
     util
 };
 use indicatif::{ProgressBar, ProgressStyle};
 use prettytable::Table;
 use stamp_core::{
-    crypto::key::{SecretKey, SignKeypair, CryptoKeypair},
+    crypto::key::{SecretKey},
     dag::Transactions,
-    identity::{ExtendKeypair, AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair, Key, IdentityID, Identity, ClaimSpec, PublishedIdentity},
-    private::{Private, MaybePrivate},
+    identity::{IdentityID, Identity, PublishedIdentity},
     util::{Timestamp, SerdeBinary},
 };
 use std::convert::TryFrom;
-use std::ops::Deref;
 
 pub(crate) fn passphrase_note() {
     util::print_wrapped("To protect your identity from unauthorized access, enter a long but memorable master passphrase. Choose something personal that is easy for you to remember but hard for someone else to guess.\n\n  Example: my dog butch has a friend named snow\n\nYou can change this later using the `stamp keychain passwd` command.\n\n");
@@ -87,31 +84,6 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
     let green = dialoguer::console::Style::new().green();
     eprintln!("\n{} {}\n", green.apply_to("Found it!"), id_str);
     Ok((tmp_master_key, transactions, now))
-}
-
-pub fn import(location: &str) -> Result<(), String> {
-    let contents = util::load_file(location)?;
-    // first try importing an owned identity
-    let imported = Transactions::deserialize_binary(contents.as_slice())
-        .or_else(|_| {
-            PublishedIdentity::deserialize(contents.as_slice())
-                .map(|x| x.identity().clone())
-        })
-        .map_err(|e| format!("Problem loading identity: {:?}", e))?;
-    let identity = util::build_identity(&imported)?;
-    let exists = db::load_identity(identity.id())?;
-    if let Some(existing) = exists {
-        if existing.is_owned() && !identity.is_owned() {
-            Err(format!("You are attempting to overwrite an existing owned identity with a public identity, which will erase all of your private data."))?;
-        }
-        if !util::yesno_prompt("The identity you're importing already exists locally. Overwrite? [y/N]", "n")? {
-            return Ok(());
-        }
-    }
-    let id_str = id_str!(identity.id())?;
-    db::save_identity(imported)?;
-    println!("Imported identity {}", id_str);
-    Ok(())
 }
 
 pub fn publish(id: &str) -> Result<String, String> {

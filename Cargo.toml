@@ -10,11 +10,9 @@ edition = "2018"
 atty = "0.2"
 clap = "2.33.3"
 dialoguer = "0.7"
-dirs = "3.0"
 indicatif = "0.15.0"
 prettytable-rs = "0.8.0"
 regex = "1.4"
-rusqlite = { version = "0.24", features = ["bundled"] }
 serde = "1.0"
 serde_derive = "1.0"
 sharks = "0.4"
@@ -22,5 +20,4 @@ stamp-aux = { path = "../aux" }
 stamp-core = { path = "../core" }
 textwrap = { version = "0.13", features = ["terminal_size"] }
 toml = "0.5"
-url = "2.2"
 

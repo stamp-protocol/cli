@@ -32,12 +32,14 @@ pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>) -> Result<(), Str
             Key::new_sign(new_key)
         }
         "crypto" => {
-            let new_key = crypto::key::CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key)
+            let new_key = crypto::key::CryptoKeypair::new_curve25519xchacha20poly1305(&master_key)
                 .map_err(|e| format!("Error generating key: {:?}", e))?;
             Key::new_crypto(new_key)
         }
         "secret" => {
-            let new_key = Private::seal(&master_key, &crypto::key::SecretKey::new_xsalsa20poly1305())
+            let rand_key = crypto::key::SecretKey::new_xchacha20poly1305()
+                .map_err(|e| format!("Unable to generate key: {}", e))?;
+            let new_key = Private::seal(&master_key, &rand_key)
                 .map_err(|e| format!("Error generating key: {:?}", e))?;
             Key::new_secret(new_key)
         }
@@ -171,7 +173,7 @@ pub fn passwd(id: &str, keyfile: Option<&str>, keyparts: Vec<&str>) -> Result<()
             }
         }
         let key_bytes = key_bytes.ok_or(format!("Could not reconstruct master key."))?;
-        let master_key = crypto::key::SecretKey::new_xsalsa20poly1305_from_slice(key_bytes.as_slice())
+        let master_key = crypto::key::SecretKey::new_xchacha20poly1305_from_slice(key_bytes.as_slice())
             .map_err(|e| format!("Problem creating master key: {}", e))?;
         Ok(master_key)
     }
@@ -252,7 +254,7 @@ pub fn print_keys_table(keys: &Vec<&Subkey>, choice: bool) {
             Key::Sign(..) => "sign",
             Key::Crypto(..) => "crypto",
             Key::Secret(..) => "secret",
-            Key::ExtensionKeypair(..) => "extension-pair",
+            Key::ExtensionKeypair { .. } => "extension-pair",
             Key::ExtensionSecret(..) => "extension-secret",
         };
         let name = key.name();

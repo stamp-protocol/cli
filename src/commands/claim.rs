@@ -10,17 +10,16 @@ use stamp_core::{
     dag::Transactions,
     identity::{
         ClaimID,
-        ClaimBin,
         ClaimSpec,
         ClaimContainer,
         IdentityID,
         RelationshipType,
     },
     private::MaybePrivate,
-    util::{Date, Public},
+    rasn::{Encode, Decode},
+    util::{Date, Url, Public, BinaryVec},
 };
 use std::convert::TryFrom;
-use url::Url;
 
 fn prompt_claim_value(prompt: &str) -> Result<String, String> {
     let value: String = dialoguer::Input::new()
@@ -47,7 +46,7 @@ pub(crate) fn claim_pre(id: &str, prompt: &str) -> Result<(SecretKey, Transactio
 }
 
 fn unwrap_maybe<T, F>(maybe: &MaybePrivate<T>, masterkey_fn: F) -> Result<T, String>
-    where T: serde::Serialize + serde::de::DeserializeOwned + Clone,
+    where T: Encode + Decode + Clone,
           F: FnOnce() -> Result<SecretKey, String>,
 {
     if maybe.has_private() {
@@ -55,7 +54,8 @@ fn unwrap_maybe<T, F>(maybe: &MaybePrivate<T>, masterkey_fn: F) -> Result<T, Str
         maybe.open(&master_key)
             .map_err(|e| format!("Unable to open private claim: {}", e))
     } else {
-        let fake_master_key = SecretKey::new_xsalsa20poly1305();
+        let fake_master_key = SecretKey::new_xchacha20poly1305()
+            .map_err(|e| format!("Unable to generate key: {}", e))?;
         maybe.open(&fake_master_key)
             .map_err(|e| format!("Unable to open claim: {}", e))
     }
@@ -188,7 +188,7 @@ pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option
                         MaybePrivate::Public(val) => {
                             $tostr(val.clone())
                         }
-                        MaybePrivate::Private(..) => {
+                        MaybePrivate::Private { .. } => {
                             let red = dialoguer::console::Style::new().red();
                             format!("{}", red.apply_to("<private>"))
                         }
@@ -207,10 +207,10 @@ pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option
             ClaimSpec::Name(name) => ("name", extract_str!(name)),
             ClaimSpec::Birthday(birthday) => ("birthday", extract_str!(birthday, |x: Date| x.to_string())),
             ClaimSpec::Email(email) => ("email", extract_str!(email)),
-            ClaimSpec::Photo(photo) => ("photo", extract_str!(photo, |x: ClaimBin| format!("<{} bytes>", x.len()))),
+            ClaimSpec::Photo(photo) => ("photo", extract_str!(photo, |x: BinaryVec| format!("<{} bytes>", x.len()))),
             ClaimSpec::Pgp(pgp) => ("pgp", extract_str!(pgp)),
             ClaimSpec::Domain(domain) => ("domain", extract_str!(domain)),
-            ClaimSpec::Url(url) => ("url", extract_str!(url, |x: Url| x.into_string())),
+            ClaimSpec::Url(url) => ("url", extract_str!(url, |x: Url| String::from(x))),
             ClaimSpec::HomeAddress(address) => ("address", extract_str!(address)),
             ClaimSpec::Relation(relation) => {
                 let rel_str = match relation {
@@ -223,7 +223,7 @@ pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option
                         let (id_full, id_short) = id_str_split!(id);
                         format!("{} ({})", if verbose { id_full } else { id_short }, ty_str)
                     }
-                    MaybePrivate::Private(..) => String::from("******"),
+                    MaybePrivate::Private { .. } => String::from("******"),
                 };
                 ("relation", rel_str)
             }

@@ -46,8 +46,8 @@ pub fn verify(input_signature: &str, input_message: Option<&str>) -> Result<(), 
         })
         .map_err(|e| format!("Error reading signature: {}", e))?;
     let sig = match &signature {
-        Signature::Detached(sig) => sig,
-        Signature::Attached(sig, ..) => sig,
+        Signature::Detached { sig } => sig,
+        Signature::Attached { sig, .. } => sig,
     };
     let identity_id = sig.signed_by_identity();
     let key_id = sig.signed_by_key();
@@ -58,13 +58,13 @@ pub fn verify(input_signature: &str, input_message: Option<&str>) -> Result<(), 
     let subkey = identity.keychain().subkey_by_keyid(&key_id.as_string())
         .ok_or(format!("Signing key {} not found in identity {}", key_id.as_string(), IdentityID::short(&id_str)))?;
     let res = match &signature {
-        Signature::Detached(..) => {
+        Signature::Detached { .. } => {
             let input_message = input_message
                 .ok_or(format!("A MESSAGE argument must be give when verifying a detached signature."))?;
             let message_bytes = util::read_file(&input_message)?;
             sign::verify(&subkey, &signature, message_bytes.as_slice())
         }
-        Signature::Attached(..) => {
+        Signature::Attached { .. } => {
             sign::verify_attached(&subkey, &signature)
         }
     };
