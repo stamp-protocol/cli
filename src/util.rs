@@ -59,7 +59,7 @@ pub(crate) fn build_identity(transactions: &Transactions) -> Result<Identity, St
 fn derive_master(passphrase: &str, now: &stamp_core::util::Timestamp) -> Result<SecretKey, String> {
     let salt_bytes = stamp_core::util::hash(format!("{}", now.format("%+")).as_bytes())
         .map_err(|err| format!("Error deriving master key salt: {:?}", err))?;
-    let master_key = stamp_core::crypto::key::derive_master_key(passphrase.as_bytes(), salt_bytes.as_ref(), KDF_OPS_MODERATE, KDF_MEM_MODERATE)
+    let master_key = stamp_core::crypto::key::derive_secret_key(passphrase.as_bytes(), salt_bytes.as_ref(), KDF_OPS_MODERATE, KDF_MEM_MODERATE)
         .map_err(|err| format!("Problem generating master key: {:?}", err))?;
     Ok(master_key)
 }
