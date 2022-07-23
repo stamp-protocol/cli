@@ -30,15 +30,15 @@ pub fn new(our_identity_id: &str, claim_id: &str) -> Result<String, String> {
     util::print_wrapped(&format!("You are about to stamp the claim {} made by the identity {}.\n", ClaimID::short(&claim_id_str), IdentityID::short(&their_id_str)));
     util::print_wrapped("Effectively, you are vouching for them and that their claim is true. You can specify your confidence in the claim:\n");
     util::print_wrapped("    none\n");
-    util::print_wrapped_indent("you are not verifying the claim at all, but wish to stamp it anyway", "        ");
+    util::print_wrapped_indent("you are not verifying the claim at all, but wish to stamp it anyway\n", "        ");
     util::print_wrapped("    low\n");
-    util::print_wrapped_indent("you have done a quick and dirty verification of the claim", "        ");
+    util::print_wrapped_indent("you have done a quick and dirty verification of the claim\n", "        ");
     util::print_wrapped("    medium\n");
-    util::print_wrapped_indent("you're doing a decent amount of verification, such as having them click a verification link in email", "        ");
+    util::print_wrapped_indent("you're doing a decent amount of verification, such as having them click a verification link in email\n", "        ");
     util::print_wrapped("    high\n");
-    util::print_wrapped_indent("you have verified the claim extensively (birth certificates, retinal scans, fingerprint matching, etc)", "        ");
+    util::print_wrapped_indent("you have verified the claim extensively (birth certificates, retinal scans, fingerprint matching, etc)\n", "        ");
     util::print_wrapped("    extreme\n");
-    util::print_wrapped_indent("you have known this person for the last 50 years and can be absolutely certain that the claim they are making is correct and they are not a hologram or an android imposter", "        ");
+    util::print_wrapped_indent("you have known this person for the last 50 years and can be absolutely certain that the claim they are making is correct and they are not a hologram or an android imposter\n", "        ");
     let confidence_val = util::value_prompt("\nHow confident are you in this claim?")?;
     let confidence = match confidence_val.as_str() {
         "none" => Confidence::None,
