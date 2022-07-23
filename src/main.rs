@@ -1,19 +1,86 @@
 #[macro_use] extern crate prettytable;
-#[macro_use]
-mod util;
+#[macro_use] mod util;
 mod commands;
 mod config;
 mod db;
 
-use clap::{Arg, App, AppSettings, ArgMatches, SubCommand};
-use stamp_aux;
+use clap::{
+    builder::{Command, TypedValueParser},
+    Arg, App, AppSettings, ArgMatches, SubCommand,
+};
 use stamp_core::{
     identity::{
+        keychain::Key,
         IdentityID,
         RelationshipType,
     },
 };
+use stamp_net::{Multiaddr};
 use std::convert::TryFrom;
+use std::ffi::OsStr;
+use std::str::FromStr;
+
+#[derive(Debug, Clone)]
+struct MultiaddrParser {}
+impl MultiaddrParser {
+    fn new() -> Self { Self {} }
+}
+
+impl TypedValueParser for MultiaddrParser {
+    type Value = Multiaddr;
+
+    fn parse_ref(&self, _cmd: &Command<'_>, _arg: Option<&Arg<'_>>, value: &OsStr) -> Result<Self::Value, clap::error::Error> {
+        let converted = value.to_string_lossy();
+        Self::Value::from_str(&converted).map_err(|e| clap::Error::raw(clap::ErrorKind::InvalidValue, e))
+    }
+}
+
+/// A private syncing token. Has the channel value (always required) and an
+/// optional shared key, which can be used to decrypt the resulting messages.
+/// Without the shared key, a node can only store and regurgitate encrypted
+/// messages in the channel. This in itself is useful for running a listener
+/// on public systems (the "cLoUd!")
+#[derive(Debug, Clone)]
+pub struct SyncToken {
+    pub id: String,
+    pub channel: String,
+    pub shared_key: Option<Key>,
+}
+impl SyncToken {
+    /// Create a new `SyncToken`
+    pub fn new(id: String, channel: String, shared_key: Option<Key>) -> Self {
+        Self { id, channel, shared_key }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SyncTokenParser {}
+impl SyncTokenParser {
+    fn new() -> Self { Self {} }
+}
+
+impl TypedValueParser for SyncTokenParser {
+    type Value = SyncToken;
+
+    fn parse_ref(&self, _cmd: &Command<'_>, _arg: Option<&Arg<'_>>, value: &OsStr) -> Result<Self::Value, clap::error::Error> {
+        let converted = value.to_string_lossy();
+        let parts = converted.split(':').collect::<Vec<_>>();
+        let id = parts.get(0)
+            .ok_or(clap::Error::raw(clap::ErrorKind::InvalidValue, "Invalid token given"))?;
+        let channel = parts.get(1)
+            .ok_or(clap::Error::raw(clap::ErrorKind::InvalidValue, "Invalid token given"))?;
+        let shared_key = if let Some(base64_key) = parts.get(2) {
+            let bytes = stamp_core::util::base64_decode(base64_key)
+                .map_err(|e| clap::Error::raw(clap::ErrorKind::InvalidValue, format!("error deserializing key: {}", e)))?;
+            let key = Key::deserialize(&bytes)
+                .map_err(|e| clap::Error::raw(clap::ErrorKind::InvalidValue, format!("error deserializing key: {}", e)))?;
+            Some(key)
+        } else {
+            None
+        };
+        Ok(Self::Value::new(String::from(*id), String::from(*channel), shared_key))
+    }
+}
 
 fn run() -> Result<(), String> {
     let conf = config::load()?;
@@ -22,6 +89,7 @@ fn run() -> Result<(), String> {
         let arg = Arg::with_name("identity")
             .long("id")
             .takes_value(true)
+            .value_name("identity id")
             .help(help);
         arg
     };
@@ -43,7 +111,6 @@ fn run() -> Result<(), String> {
         .about("A command line interface to the Stamp identity protocol.")
         .after_help("EXAMPLES:\n    stamp id new\n        Create a new identity\n    stamp id list\n        List all local identities\n    stamp keychain keyfile -s 3,5 -o ~/backup.key\n        Back up your master key into a recovery file in case you lose your master passphrase.")
         .setting(AppSettings::SubcommandRequiredElseHelp)
-        .global_setting(AppSettings::VersionlessSubcommands)
         .global_setting(AppSettings::InferSubcommands)
         .subcommand(
             SubCommand::with_name("id")
@@ -61,19 +128,19 @@ fn run() -> Result<(), String> {
                         .setting(AppSettings::DisableVersion)
                         .about("Creates a new identity with a vanity ID value. In other words, instead of a random string for an ID, we attempt to generate one that satisfies the given critera. Keep in mind, vanity IDs beyond just a few characters can take a long time to find.")
                         .arg(Arg::with_name("regex")
-                                .short("r")
+                                .short('r')
                                 .long("regex")
                                 .takes_value(true)
                                 .help("A regex, ex: (?i)[-_]re{3,}[-_]"))
                         .arg(Arg::with_name("contains")
-                                .short("c")
+                                .short('c')
                                 .long("contains")
                                 .multiple(true)
                                 .takes_value(true)
                                 .number_of_values(1)
                                 .help("Contains a value, ex: 123"))
                         .arg(Arg::with_name("prefix")
-                                .short("p")
+                                .short('p')
                                 .long("prefix")
                                 .takes_value(true)
                                 .help("Vanity prefix, ex: sam-"))
@@ -83,7 +150,7 @@ fn run() -> Result<(), String> {
                         .setting(AppSettings::DisableVersion)
                         .about("List all locally stored identities (both owned and imported).")
                         .arg(Arg::with_name("verbose")
-                                .short("v")
+                                .short('v')
                                 .long("verbose")
                                 .help("Verbose output, with long-form IDs."))
                         .arg(Arg::with_name("SEARCH")
@@ -106,7 +173,7 @@ fn run() -> Result<(), String> {
                         .about("Publish one of your identities. This outputs the identity in a format others can import. For instance you can publish it to a URL you own or a social network. Requires access to the identity's publish keypair.")
                         .arg(id_arg("The ID of the identity we want to publish. This overrides the configured default identity."))
                         .arg(Arg::with_name("output")
-                                .short("o")
+                                .short('o')
                                 .long("output")
                                 .takes_value(true)
                                 .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
@@ -115,9 +182,9 @@ fn run() -> Result<(), String> {
                     SubCommand::with_name("export-private")
                         .setting(AppSettings::DisableVersion)
                         .about("Export one of your identities. This export includes private keys so even though it is encrypted, it's important you do not share it with *anybody*. EVER.")
-                        .arg(id_arg("The ID of the identity we want to publish. This overrides the configured default identity."))
+                        .arg(id_arg("The ID of the identity we want to export. This overrides the configured default identity."))
                         .arg(Arg::with_name("output")
-                                .short("o")
+                                .short('o')
                                 .long("output")
                                 .takes_value(true)
                                 .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
@@ -131,11 +198,11 @@ fn run() -> Result<(), String> {
                                 .index(1)
                                 .help("An identity ID, name, or email to search for when deleting."))
                         .arg(Arg::with_name("yes")
-                                .short("y")
+                                .short('y')
                                 .long("yes")
                                 .help("Do not confirm deletion, just delete. Use with caution."))
                         .arg(Arg::with_name("verbose")
-                                .short("v")
+                                .short('v')
                                 .long("verbose")
                                 .help("Use verbose output with long-form IDs when printing deletion table."))
                 )
@@ -174,7 +241,7 @@ fn run() -> Result<(), String> {
                                 .setting(AppSettings::DisableVersion)
                                 .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
                                 .arg(Arg::with_name("private")
-                                        .short("p")
+                                        .short('p')
                                         .long("private")
                                         .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                         )
@@ -185,7 +252,7 @@ fn run() -> Result<(), String> {
                                 .setting(AppSettings::DisableVersion)
                                 .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
                                 .arg(Arg::with_name("private")
-                                        .short("p")
+                                        .short('p')
                                         .long("private")
                                         .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                         )
@@ -195,7 +262,7 @@ fn run() -> Result<(), String> {
                                 .setting(AppSettings::DisableVersion)
                                 .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
                                 .arg(Arg::with_name("private")
-                                        .short("p")
+                                        .short('p')
                                         .long("private")
                                         .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                         )
@@ -205,7 +272,7 @@ fn run() -> Result<(), String> {
                                 .setting(AppSettings::DisableVersion)
                                 .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
                                 .arg(Arg::with_name("private")
-                                        .short("p")
+                                        .short('p')
                                         .long("private")
                                         .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                                 .arg(Arg::with_name("PHOTO")
@@ -219,7 +286,7 @@ fn run() -> Result<(), String> {
                                 .setting(AppSettings::DisableVersion)
                                 .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
                                 .arg(Arg::with_name("private")
-                                        .short("p")
+                                        .short('p')
                                         .long("private")
                                         .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                         )
@@ -229,7 +296,7 @@ fn run() -> Result<(), String> {
                                 .setting(AppSettings::DisableVersion)
                                 .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
                                 .arg(Arg::with_name("private")
-                                        .short("p")
+                                        .short('p')
                                         .long("private")
                                         .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                         )
@@ -239,7 +306,7 @@ fn run() -> Result<(), String> {
                                 .setting(AppSettings::DisableVersion)
                                 .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
                                 .arg(Arg::with_name("private")
-                                        .short("p")
+                                        .short('p')
                                         .long("private")
                                         .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                         )
@@ -249,7 +316,7 @@ fn run() -> Result<(), String> {
                                 .setting(AppSettings::DisableVersion)
                                 .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
                                 .arg(Arg::with_name("private")
-                                        .short("p")
+                                        .short('p')
                                         .long("private")
                                         .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                         )
@@ -263,7 +330,7 @@ fn run() -> Result<(), String> {
                                         .possible_values(&["org"])
                                         .help("The relationship type."))
                                 .arg(Arg::with_name("private")
-                                        .short("p")
+                                        .short('p')
                                         .long("private")
                                         .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                         )
@@ -283,7 +350,7 @@ fn run() -> Result<(), String> {
                         .setting(AppSettings::DisableVersion)
                         .arg(id_arg("The ID of the identity we are viewing the claim for. This overrides the configured default identity."))
                         .arg(Arg::with_name("output")
-                                .short("o")
+                                .short('o')
                                 .long("output")
                                 .takes_value(true)
                                 .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
@@ -299,11 +366,11 @@ fn run() -> Result<(), String> {
                         .setting(AppSettings::DisableVersion)
                         .arg(id_arg("The ID of the identity we are listing the claims for. This overrides the configured default identity."))
                         .arg(Arg::with_name("private")
-                                .short("p")
+                                .short('p')
                                 .long("private")
                                 .help("Indicates this is a private claim. Private claims cannot be read by anyone without giving them explicit access, and are great for things like your home address or your various relationships."))
                         .arg(Arg::with_name("verbose")
-                                .short("v")
+                                .short('v')
                                 .long("verbose")
                                 .help("Verbose output, with long-form IDs."))
                 )
@@ -335,7 +402,7 @@ fn run() -> Result<(), String> {
                                 .required(true)
                                 .help("The ID (prefix or full) of the claim we wish to stamp."))
                         .arg(Arg::with_name("output")
-                                .short("o")
+                                .short('o')
                                 .long("output")
                                 .takes_value(true)
                                 .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
@@ -345,22 +412,22 @@ fn run() -> Result<(), String> {
                         .about("Create a stamp request. This is is generally needed when you want to have another identity stamp a private claim, in which case the claim is decrypted with your master key, then encrypted via the recipient's public key so only they can open it. You can also send stamp requests for public claims as well.")
                         .setting(AppSettings::DisableVersion)
                         .arg(Arg::with_name("key-from")
-                                .short("f")
+                                .short('f')
                                 .long("key-from")
                                 .takes_value(true)
                                 .help("The ID or name of the `crypto` key in your keychain you want to sign the message with. If you don't specify this, you will be prompted."))
                         .arg(Arg::with_name("key-to")
-                                .short("t")
+                                .short('t')
                                 .long("key-to")
                                 .takes_value(true)
                                 .help("The ID or name of the `crypto` key in the recipient's keychain that the message will be encrypted with. If you don't specify this, you will be prompted."))
                         .arg(Arg::with_name("output")
-                                .short("o")
+                                .short('o')
                                 .long("output")
                                 .takes_value(true)
                                 .help("The output file to write the encrypted message to. You can leave blank or use the value '-' to signify STDOUT."))
                         .arg(Arg::with_name("base64")
-                                .short("b")
+                                .short('b')
                                 .long("base64")
                                 .help("If set, output the encrypted message as base64 (which is easier to put in email or a website),"))
                         .arg(id_arg("The ID of the identity we are creating the stamp request for. This overrides the configured default identity."))
@@ -378,7 +445,7 @@ fn run() -> Result<(), String> {
                                 .required(true)
                                 .help("The ID (prefix or full) of the claim we want to see stamps for."))
                         .arg(Arg::with_name("verbose")
-                                .short("v")
+                                .short('v')
                                 .long("verbose")
                                 .help("Verbose output, with long-form IDs."))
                 )
@@ -401,7 +468,7 @@ fn run() -> Result<(), String> {
                                 .index(1)
                                 .help("The ID of the stamp we're revoking."))
                         .arg(Arg::with_name("yes")
-                                .short("y")
+                                .short('y')
                                 .long("yes")
                                 .help("o not confirm revocation."))
                 )
@@ -427,7 +494,7 @@ fn run() -> Result<(), String> {
                                 .index(2)
                                 .help("This key's name. The name is public and allows for organization and referencing the key by a memorable value. Ex: turtl:master-key"))
                         .arg(Arg::with_name("description")
-                                .short("d")
+                                .short('d')
                                 .long("desc")
                                 .takes_value(true)
                                 .help("They key's description, ex: Use this key to send me emails."))
@@ -447,12 +514,12 @@ fn run() -> Result<(), String> {
                         .setting(AppSettings::DisableVersion)
                         .arg(id_arg("The ID of the identity which has the key we are updating. This overrides the configured default identity."))
                         .arg(Arg::with_name("name")
-                                .short("n")
+                                .short('n')
                                 .long("name")
                                 .takes_value(true)
                                 .help("Set the new name of this key."))
                         .arg(Arg::with_name("description")
-                                .short("d")
+                                .short('d')
                                 .long("desc")
                                 .takes_value(true)
                                 .help("Set the new description of this key."))
@@ -485,7 +552,7 @@ fn run() -> Result<(), String> {
                         .setting(AppSettings::DisableVersion)
                         .about("Change the master passphrase for the private keys in an identity.")
                         .arg(Arg::with_name("keyfile")
-                                .short("k")
+                                .short('k')
                                 .long("keyfile")
                                 .takes_value(true)
                                 .help("If you generated a keyfile via `stamp keychain keyfile` you can pass it here. This lets you recover your identity even if you lost your master passphrase."))
@@ -502,12 +569,12 @@ fn run() -> Result<(), String> {
                         .setting(AppSettings::DisableVersion)
                         .about("Back up your master key such that it can be used with the `stamp keychain passwd` command to recover your identity in the event you lose your master passphrase. This command has the ability to use Shamir's algorithm so you can split your master key into multiple parts, each of which can be saved to different location (or given to different people). Later, you can recover your master key if you have some minimum number of these parts. If you elect to use Shamir's, each key part will be output on its own line.")
                         .arg(Arg::with_name("shamir")
-                                .short("s")
+                                .short('s')
                                 .long("shamir")
                                 .takes_value(true)
-                                .help("A value in the format M/S (eg 3/5) that splits the key into S parts and requires at least M parts to recover the key (Default: 1,1)"))
+                                .help("A value in the format M/S (eg 3/5) that splits the key into S parts and requires at least M parts to recover the key (Default: 1/1)"))
                         .arg(Arg::with_name("output")
-                                .short("o")
+                                .short('o')
                                 .long("output")
                                 .takes_value(true)
                                 .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
@@ -525,22 +592,22 @@ fn run() -> Result<(), String> {
                         .setting(AppSettings::DisableVersion)
                         .about("Send a message to another identity. This message will be signed with a `crypto` key of your choosing (in your keychain) which will allow the recipient to verify that the message is in fact from you.")
                         .arg(Arg::with_name("key-from")
-                                .short("f")
+                                .short('f')
                                 .long("key-from")
                                 .takes_value(true)
                                 .help("The ID or name of the `crypto` key in your keychain you want to sign the message with. If you don't specify this, you will be prompted."))
                         .arg(Arg::with_name("key-to")
-                                .short("t")
+                                .short('t')
                                 .long("key-to")
                                 .takes_value(true)
                                 .help("The ID or name of the `crypto` key in the recipient's keychain that the message will be encrypted with. If you don't specify this, you will be prompted."))
                         .arg(Arg::with_name("output")
-                                .short("o")
+                                .short('o')
                                 .long("output")
                                 .takes_value(true)
                                 .help("The output file to write the encrypted message to. You can leave blank or use the value '-' to signify STDOUT."))
                         .arg(Arg::with_name("base64")
-                                .short("b")
+                                .short('b')
                                 .long("base64")
                                 .help("If set, output the encrypted message as base64 (which is easier to put in email or a website),"))
                         .arg(id_arg("The ID of the identity we want to send from. This overrides the configured default identity."))
@@ -558,17 +625,17 @@ fn run() -> Result<(), String> {
                         .setting(AppSettings::DisableVersion)
                         .about("Send an anonymous message to another identity. This message is not signed by any of your keys, which means the recipient doesn't need to have your identity on hand to open the message.")
                         .arg(Arg::with_name("key-to")
-                                .short("t")
+                                .short('t')
                                 .long("key-to")
                                 .takes_value(true)
                                 .help("The ID or name of the `crypto` key in the recipient's keychain that the message will be encrypted with. If you don't specify this, you will be prompted."))
                         .arg(Arg::with_name("output")
-                                .short("o")
+                                .short('o')
                                 .long("output")
                                 .takes_value(true)
                                 .help("The output file to write the encrypted message to. You can leave blank or use the value '-' to signify STDOUT."))
                         .arg(Arg::with_name("base64")
-                                .short("b")
+                                .short('b')
                                 .long("base64")
                                 .help("If set, output the encrypted message as base64 (which is easier to put in email or a website),"))
                         .arg(Arg::with_name("SEARCH")
@@ -585,12 +652,12 @@ fn run() -> Result<(), String> {
                         .setting(AppSettings::DisableVersion)
                         .about("Open a message from another identity. This can be either a signed message or anonymous, although if the message is signed then the sender's identity must be imported.")
                         .arg(Arg::with_name("key-open")
-                                .short("k")
+                                .short('k')
                                 .long("key-open")
                                 .takes_value(true)
                                 .help("The ID or name of the `crypto` key in your keychain that the message will be opened with. If you don't specify this, you will be prompted."))
                         .arg(Arg::with_name("output")
-                                .short("o")
+                                .short('o')
                                 .long("output")
                                 .takes_value(true)
                                 .help("The output file to write the plaintext message to. You can leave blank or use the value '-' to signify STDOUT."))
@@ -612,21 +679,21 @@ fn run() -> Result<(), String> {
                         .setting(AppSettings::DisableVersion)
                         .about("Sign a message or document with one of your `sign` keys. This signature can only be created with your private signing key, but anybody who has your public key can verify the message is unaltered.")
                         .arg(Arg::with_name("key-sign")
-                                .short("k")
+                                .short('k')
                                 .long("key-sign")
                                 .takes_value(true)
                                 .help("The ID or name of the `sign` key you wish to sign with. If you don't specify this, you will be prompted."))
                         .arg(Arg::with_name("output")
-                                .short("o")
+                                .short('o')
                                 .long("output")
                                 .takes_value(true)
                                 .help("The output file to write the signature to. You can leave blank or use the value '-' to signify STDOUT."))
                         .arg(Arg::with_name("attached")
-                                .short("a")
+                                .short('a')
                                 .long("attached")
                                 .help("If set, the message body will be appended to the signature. This allows you to send a message and the signature of that message together. The default is to generate a detached signature that must be published alongside the message."))
                         .arg(Arg::with_name("base64")
-                                .short("b")
+                                .short('b')
                                 .long("base64")
                                 .help("If set, output the signature as base64 (which is easier to put in email or a website),"))
                         .arg(id_arg("The ID of the identity we want to sign from. This overrides the configured default identity."))
@@ -665,6 +732,71 @@ fn run() -> Result<(), String> {
                 )
         )
         .subcommand(
+            SubCommand::with_name("sync")
+                .about("Sync your private identity between your devices.")
+                .setting(AppSettings::DisableVersion)
+                .setting(AppSettings::SubcommandRequiredElseHelp)
+                .after_help("EXAMPLE:\n    # run this on the device that has your full identity\n    stamp sync token -b\n        Your token is: TQzq9RCLXhcNqoqD\n    # run this on a home or public server\n    stamp sync listen TQzq9RCLXhcNqoqD\n        Listening on 44.55.66.77:5757\n    # run this on the device you ran `stamp sync token` on\n    stamp sync run --join 44.55.66.77:5757\n        Syncing!")
+                .subcommand(
+                    SubCommand::with_name("run")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Runs the private sync. On the first run, you will have to specify a listener via --join, but afterwards the listener(s) will be saved and you can omit the --join option.")
+                        .arg(id_arg("The ID of the identity we are syncing. This overrides the configured default identity."))
+                        .arg(Arg::with_name("token")
+                            .short('t')
+                            .long("token")
+                            .takes_value(true)
+                            .help("The full syncing token (generated on your primary devices via `stamp sync token`). This option only needs to be used if syncing your identity on a new device for the first time."))
+                        .arg(Arg::with_name("TOKEN")
+                            .index(1)
+                            .required(true)
+                            .help("The token you got from running `stamp sync new`"))
+                )
+                .subcommand(
+                    SubCommand::with_name("listen")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Start a long-lived private syncing peer that your devices can talk to.")
+                        .arg(Arg::with_name("TOKEN")
+                            .index(1)
+                            .required(true)
+                            .value_parser(SyncTokenParser::new())
+                            .help("The token you got from running `stamp sync token -b`"))
+                        .arg(id_arg("The ID of the identity we are syncing. This can be ommitted for blind or uninitiated peers."))
+                        .arg(Arg::with_name("bind")
+                            .short('b')
+                            .long("bind")
+                            .value_name("/ip4/1.2.3.4/tcp/5757")
+                            .default_value("/ip4/0.0.0.0/tcp/5757")
+                            .takes_value(true)
+                            .value_parser(MultiaddrParser::new())
+                            .help("The address to listen on"))
+                        .arg(Arg::with_name("join")
+                            .action(clap::ArgAction::Append)
+                            .short('j')
+                            .long("join")
+                            .takes_value(true)
+                            .value_parser(MultiaddrParser::new())
+                            .value_name("/dns/boot.stampnet.org/tcp/5757")
+                            .help("Join an existing node. This can be a node you own, or a public relay which allows secure communication between your personal nodes even behind firewalls."))
+                )
+                .subcommand(
+                    SubCommand::with_name("token")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Create and display the token used for private syncing.") 
+                        .arg(id_arg("The ID of the identity we want to set up syncing for. This overrides the configured default identity."))
+                        .arg(Arg::with_name("regen")
+                            .short('r')
+                            .long("regen")
+                            .takes_value(false)
+                            .help("Use to regenerate your token. Helpful if the original is compromised or lost."))
+                        .arg(Arg::with_name("blind")
+                            .short('b')
+                            .long("blind")
+                            .takes_value(false)
+                            .help("Used when initiating a \"blind\" (non-decrypting) peer/device. Useful for peers on public networks/cloud services."))
+                )
+        )
+        .subcommand(
             SubCommand::with_name("dag")
                 .about("Interact with an identity's DAG directly.")
                 .setting(AppSettings::DisableVersion)
@@ -700,9 +832,9 @@ fn run() -> Result<(), String> {
         );
     let args = app.get_matches();
     match args.subcommand() {
-        ("id", Some(args)) => {
+        Some(("id", args)) => {
             match args.subcommand() {
-                ("new", _) => {
+                Some(("new", _)) => {
                     crate::commands::id::passphrase_note();
                     let (transactions, master_key) = util::with_new_passphrase("Your master passphrase", |master_key, now| {
                         stamp_aux::id::new(&master_key, now)
@@ -719,7 +851,7 @@ fn run() -> Result<(), String> {
                         .map_err(|e| format!("Error finalizing identity: {}", e))?;
                     crate::commands::id::post_create(&transactions)?;
                 }
-                ("vanity", Some(args)) => {
+                Some(("vanity", args)) => {
                     let regex = args.value_of("regex");
                     let contains = args.values_of("contains");
                     let prefix = args.value_of("prefix");
@@ -728,7 +860,7 @@ fn run() -> Result<(), String> {
                         None => vec![],
                     };
                     if regex.is_none() && contains.len() == 0 && prefix.is_none() {
-                        println!("{}", args.usage());
+                        println!("Please specify --regex, --contains, or --prefix");
                         return Ok(());
                     }
 
@@ -742,7 +874,7 @@ fn run() -> Result<(), String> {
                         .map_err(|e| format!("Error finalizing identity: {}", e))?;
                     crate::commands::id::post_create(&transactions)?;
                 }
-                ("list", Some(args)) => {
+                Some(("list", args)) => {
                     let search = args.value_of("SEARCH");
                     let verbose = args.is_present("verbose");
 
@@ -752,7 +884,7 @@ fn run() -> Result<(), String> {
                         .collect::<Result<Vec<_>, String>>()?;
                     crate::commands::id::print_identities_table(&identities, verbose);
                 }
-                ("import", Some(args)) => {
+                Some(("import", args)) => {
                     let location = args.value_of("LOCATION")
                         .ok_or(format!("Must specify a location value"))?;
 
@@ -769,71 +901,71 @@ fn run() -> Result<(), String> {
                     db::save_identity(transactions)?;
                     println!("Imported identity {}", id_str);
                 }
-                ("publish", Some(args)) => {
+                Some(("publish", args)) => {
                     let id = id_val(args)?;
                     let output = args.value_of("output").unwrap_or("-");
                     let published = commands::id::publish(&id)?;
                     util::write_file(output, published.as_bytes())?;
                 }
-                ("export-private", Some(args)) => {
+                Some(("export-private", args)) => {
                     let id = id_val(args)?;
                     let output = args.value_of("output").unwrap_or("-");
                     let serialized = commands::id::export_private(&id)?;
                     util::write_file(output, serialized.as_slice())?;
                 }
-                ("delete", Some(args)) => {
+                Some(("delete", args)) => {
                     let search = args.value_of("SEARCH")
                         .ok_or(format!("Must specify a search value"))?;
                     let skip_confirm = args.is_present("yes");
                     let verbose = args.is_present("verbose");
                     commands::id::delete(search, skip_confirm, verbose)?
                 }
-                ("view", Some(args)) => {
+                Some(("view", args)) => {
                     let search = args.value_of("SEARCH")
                         .ok_or(format!("Must specify a search value"))?;
                     let identity = commands::id::view(search)?;
                     println!("{}", identity);
                 }
-                _ => println!("{}", args.usage()),
+                _ => unreachable!("Unknown command")
             }
         }
-        ("claim", Some(args)) => {
+        Some(("claim", args)) => {
             macro_rules! aux_op {
                 ($op:expr) => {
                     $op.map_err(|e| format!("Problem adding claim: {}", e))
                 }
             }
             match args.subcommand() {
-                ("new", Some(args)) => {
+                Some(("new", args)) => {
                     match args.subcommand() {
-                        ("identity", Some(args)) => {
+                        Some(("identity", args)) => {
                             let id = id_val(args)?;
                             let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter the ID of your other identity")?;
                             aux_op!(stamp_aux::claim::new_id(&master_key, transactions, value))?;
                             println!("Claim added!");
                         }
-                        ("name", Some(args)) => {
+                        Some(("name", args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
                             let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter your name")?;
                             aux_op!(stamp_aux::claim::new_name(&master_key, transactions, value, private))?;
                             println!("Claim added!");
                         }
-                        ("birthday", Some(args)) => {
+                        Some(("birthday", args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
                             let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter your date of birth (eg 1987-11-23)")?;
                             aux_op!(stamp_aux::claim::new_birthday(&master_key, transactions, value, private))?;
                             println!("Claim added!");
                         }
-                        ("email", Some(args)) => {
+                        Some(("email", args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
                             let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter your email")?;
                             aux_op!(stamp_aux::claim::new_email(&master_key, transactions, value, private))?;
                             println!("Claim added!");
                         }
-                        ("photo", Some(args)) => {
+                        Some(("photo", args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
                             let photofile = args.value_of("PHOTO")
@@ -847,14 +979,14 @@ fn run() -> Result<(), String> {
                             aux_op!(stamp_aux::claim::new_photo(&master_key, transactions, photo_bytes, private))?;
                             println!("Claim added!");
                         }
-                        ("pgp", Some(args)) => {
+                        Some(("pgp", args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
                             let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter your PGP ID")?;
                             aux_op!(stamp_aux::claim::new_pgp(&master_key, transactions, value, private))?;
                             println!("Claim added!");
                         }
-                        ("domain", Some(args)) => {
+                        Some(("domain", args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
                             let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter your domain name")?;
@@ -870,7 +1002,7 @@ fn run() -> Result<(), String> {
                                 println!("  {}\n  {}\n", instant_values[0], instant_values[1]);
                             }
                         }
-                        ("url", Some(args)) => {
+                        Some(("url", args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
                             let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter the URL you own")?;
@@ -886,14 +1018,14 @@ fn run() -> Result<(), String> {
                                 println!("  {}\n  {}\n", instant_values[0], instant_values[1]);
                             }
                         }
-                        ("address", Some(args)) => {
+                        Some(("address", args)) => {
                             let id = id_val(args)?;
                             let private = args.is_present("private");
                             let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter your address")?;
                             aux_op!(stamp_aux::claim::new_address(&master_key, transactions, value, private))?;
                             println!("Claim added!");
                         }
-                        ("relation", Some(args)) => {
+                        Some(("relation", args)) => {
                             let id = id_val(args)?;
                             let ty = args.value_of("TYPE").ok_or(format!("Must specify a relationship type"))?;
                             let private = args.is_present("private");
@@ -905,28 +1037,28 @@ fn run() -> Result<(), String> {
                             aux_op!(stamp_aux::claim::new_relation(&master_key, transactions, reltype, value, private))?;
                             println!("Claim added!");
                         }
-                        _ => println!("{}", args.usage()),
+                        _ => unreachable!("Unknown command")
                     }
                 }
-                ("check", Some(args)) => {
+                Some(("check", args)) => {
                     let claim_id = args.value_of("CLAIM")
                         .ok_or(format!("Must specify a claim ID"))?;
                     commands::claim::check(claim_id)?;
                 }
-                ("view", Some(args)) => {
+                Some(("view", args)) => {
                     let id = id_val(args)?;
                     let output = args.value_of("output").unwrap_or("-");
                     let claim_id = args.value_of("CLAIM")
                         .ok_or(format!("Must specify a claim ID"))?;
                     commands::claim::view(&id, claim_id, output)?;
                 }
-                ("list", Some(args)) => {
+                Some(("list", args)) => {
                     let id = id_val(args)?;
                     let private = args.is_present("private");
                     let verbose = args.is_present("verbose");
                     commands::claim::list(&id, private, verbose)?;
                 }
-                ("delete", Some(args)) => {
+                Some(("delete", args)) => {
                     let id = id_val(args)?;
                     let claim_id = args.value_of("CLAIM")
                         .ok_or(format!("Must specify a claim ID"))?;
@@ -939,12 +1071,12 @@ fn run() -> Result<(), String> {
                     aux_op!(stamp_aux::claim::delete(&master_key, transactions, &claim_id))?;
                     println!("Claim removed!");
                 }
-                _ => println!("{}", args.usage()),
+                _ => unreachable!("Unknown command")
             }
         }
-        ("stamp", Some(args)) => {
+        Some(("stamp", args)) => {
             match args.subcommand() {
-                ("new", Some(args)) => {
+                Some(("new", args)) => {
                     let our_identity_id = id_val(args)?;
                     let claim_id = args.value_of("CLAIM")
                         .ok_or(format!("Must specify a claim"))?;
@@ -952,30 +1084,30 @@ fn run() -> Result<(), String> {
                     let stamp = commands::stamp::new(&our_identity_id, claim_id)?;
                     util::write_file(output, stamp.as_bytes())?;
                 }
-                ("req", Some(args)) => {
+                Some(("req", args)) => {
                     drop(args);
                     unimplemented!();
                 }
-                ("list", Some(args)) => {
+                Some(("list", args)) => {
                     drop(args);
                     unimplemented!();
                 }
-                ("accept", Some(args)) => {
+                Some(("accept", args)) => {
                     let identity_id = id_val(args)?;
                     let location = args.value_of("LOCATION")
                         .ok_or(format!("Must specify a stamp location"))?;
                     commands::stamp::accept(&identity_id, location)?;
                 }
-                ("revoke", Some(args)) => {
+                Some(("revoke", args)) => {
                     drop(args);
                     unimplemented!();
                 }
-                _ => println!("{}", args.usage()),
+                _ => unreachable!("Unknown command")
             }
         }
-        ("keychain", Some(args)) => {
+        Some(("keychain", args)) => {
             match args.subcommand() {
-                ("new", Some(args)) => {
+                Some(("new", args)) => {
                     let id = id_val(args)?;
                     let ty = args.value_of("TYPE")
                         .ok_or(format!("Must specify a type"))?;
@@ -984,12 +1116,12 @@ fn run() -> Result<(), String> {
                     let desc = args.value_of("description");
                     commands::keychain::new(&id, ty, name, desc)?;
                 }
-                ("list", Some(args)) => {
+                Some(("list", args)) => {
                     let id = id_val(args)?;
                     let search = args.value_of("SEARCH");
                     commands::keychain::list(&id, search)?;
                 }
-                ("update", Some(args)) => {
+                Some(("update", args)) => {
                     let id = id_val(args)?;
                     let search = args.value_of("SEARCH");
                     let name = args.value_of("name");
@@ -1000,19 +1132,19 @@ fn run() -> Result<(), String> {
                     drop(desc);
                     unimplemented!();
                 }
-                ("delete", Some(args)) => {
+                Some(("delete", args)) => {
                     let id = id_val(args)?;
                     let search = args.value_of("SEARCH")
                         .ok_or(format!("Must specify a key id or name"))?;
                     commands::keychain::delete(&id, search)?;
                 }
-                ("revoke", Some(args)) => {
+                Some(("revoke", args)) => {
                     let id = id_val(args)?;
                     let search = args.value_of("SEARCH")
                         .ok_or(format!("Must specify a key id or name"))?;
                     commands::keychain::revoke(&id, search)?;
                 }
-                ("passwd", Some(args)) => {
+                Some(("passwd", args)) => {
                     let id = id_val(args)?;
                     let keyfile = args.value_of("keyfile");
                     let keyparts: Vec<&str> = match args.values_of("KEYPARTS") {
@@ -1021,18 +1153,18 @@ fn run() -> Result<(), String> {
                     };
                     commands::keychain::passwd(&id, keyfile, keyparts)?;
                 }
-                ("keyfile", Some(args)) => {
+                Some(("keyfile", args)) => {
                     let id = id_val(args)?;
                     let shamir = args.value_of("shamir").unwrap_or("1/1");
                     let output = args.value_of("output").unwrap_or("-");
                     commands::keychain::keyfile(&id, shamir, output)?;
                 }
-                _ => println!("{}", args.usage()),
+                _ => unreachable!("Unknown command")
             }
         }
-        ("message", Some(args)) => {
+        Some(("message", args)) => {
             match args.subcommand() {
-                ("send", Some(args)) => {
+                Some(("send", args)) => {
                     let from_id = id_val(args)?;
                     let key_from_search = args.value_of("key-from");
                     let key_to_search = args.value_of("key-to");
@@ -1043,7 +1175,7 @@ fn run() -> Result<(), String> {
                     let base64 = args.is_present("base64");
                     commands::message::send(&from_id, key_from_search, key_to_search, input, output, search, base64)?;
                 }
-                ("send-anonymous", Some(args)) => {
+                Some(("send-anonymous", args)) => {
                     let key_to_search = args.value_of("key-to");
                     let output = args.value_of("output").unwrap_or("-");
                     let search = args.value_of("SEARCH")
@@ -1052,19 +1184,19 @@ fn run() -> Result<(), String> {
                     let base64 = args.is_present("base64");
                     commands::message::send_anonymous(key_to_search, input, output, search, base64)?;
                 }
-                ("open", Some(args)) => {
+                Some(("open", args)) => {
                     let to_id = id_val(args)?;
                     let key_open = args.value_of("key-open");
                     let output = args.value_of("output").unwrap_or("-");
                     let input = args.value_of("ENCRYPTED").unwrap_or("-");
                     commands::message::open(&to_id, key_open, input, output)?;
                 }
-                _ => println!("{}", args.usage()),
+                _ => unreachable!("Unknown command")
             }
         }
-        ("signature", Some(args)) => {
+        Some(("signature", args)) => {
             match args.subcommand() {
-                ("sign", Some(args)) => {
+                Some(("sign", args)) => {
                     let sign_id = id_val(args)?;
                     let key_sign_search = args.value_of("key-sign");
                     let output = args.value_of("output").unwrap_or("-");
@@ -1073,49 +1205,79 @@ fn run() -> Result<(), String> {
                     let base64 = args.is_present("base64");
                     commands::sign::sign(&sign_id, key_sign_search, input, output, attached, base64)?;
                 }
-                ("verify", Some(args)) => {
+                Some(("verify", args)) => {
                     let signature = args.value_of("SIGNATURE").unwrap_or("-");
                     let input = args.value_of("MESSAGE");
                     commands::sign::verify(signature, input)?;
                 }
-                _ => println!("{}", args.usage()),
+                _ => unreachable!("Unknown command")
             }
         }
-        ("config", Some(args)) => {
+        Some(("config", args)) => {
             match args.subcommand() {
-                ("set-default", Some(args)) => {
+                Some(("set-default", args)) => {
                     let search = args.value_of("SEARCH")
                         .ok_or(format!("Must specify a search value"))?;
                     commands::config::set_default(search)?;
                 }
-                _ => println!("{}", args.usage()),
+                _ => unreachable!("Unknown command")
             }
         }
-        ("dag", Some(args)) => {
+        Some(("dag", args)) => {
             match args.subcommand() {
-                ("list", Some(args)) => {
+                Some(("list", args)) => {
                     let id = id_val(args)?;
                     commands::dag::list(&id)?;
                 }
-                ("reset", Some(args)) => {
+                Some(("reset", args)) => {
                     let id = id_val(args)?;
                     let txid = args.value_of("TXID").ok_or(format!("Must specify a TXID"))?;
                     commands::dag::reset(&id, txid)?;
                 }
-                _ => println!("{}", args.usage()),
+                _ => unreachable!("Unknown command")
             }
         }
-        ("debug", Some(args)) => {
+        Some(("debug", args)) => {
             match args.subcommand() {
-                ("resave", Some(args)) => {
+                Some(("resave", args)) => {
                     // no default here, debug commands should be explicit
                     let id = args.value_of("identity").ok_or(format!("Must specify an ID"))?;
                     commands::debug::resave(id)?;
                 }
-                _ => println!("{}", args.usage()),
+                _ => unreachable!("Unknown command")
             }
         }
-        _ => println!("{}", args.usage()),
+        Some(("sync", args)) => {
+            match args.subcommand() {
+                Some(("join", args)) => {
+                    let token = args.value_of("TOKEN")
+                        .ok_or(format!("Must specify a join token"))?;
+                    println!("SYNC JOIN: {:?}", token);
+                }
+                Some(("listen", args)) => {
+                    let token = args.get_one::<SyncToken>("TOKEN")
+                        .ok_or(format!("Must specify a join token"))?
+                        .clone();
+                    let bind = args.get_one::<Multiaddr>("bind")
+                        .expect("Missing `bind` argument.")
+                        .clone();
+                    let join = args.get_many::<Multiaddr>("join")
+                        .into_iter()
+                        .flatten()
+                        .map(|x| x.clone())
+                        .collect::<Vec<_>>();
+                    commands::sync::listen(&token, bind, join)?;
+                }
+                Some(("token", args)) => {
+                    let id = id_val(args)?;
+                    let blind = args.is_present("blind");
+                    let regen = args.is_present("regen");
+                    commands::sync::token(&id, blind, regen)?;
+                }
+                _ => unreachable!("Unknown command")
+            }
+        }
+        _ => unreachable!("Unknown command")
     }
     Ok(())
 }

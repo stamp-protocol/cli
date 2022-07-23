@@ -7,4 +7,5 @@ pub mod keychain;
 pub mod message;
 pub mod sign;
 pub mod stamp;
+pub mod sync;
 

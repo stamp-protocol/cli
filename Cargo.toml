@@ -8,16 +8,18 @@ edition = "2018"
 
 [dependencies]
 atty = "0.2"
-clap = "2.33.3"
+clap = { version = "3.2.5", features = ["derive"] }
 dialoguer = "0.10.0"
 indicatif = "0.15.0"
+once_cell = "1.13"
 prettytable-rs = "0.8.0"
-regex = "1.4"
+regex = "1.6"
 serde = "1.0"
 serde_derive = "1.0"
 sharks = "0.4"
 stamp-aux = { path = "../aux" }
 stamp-core = { path = "../core" }
+stamp-net = { path = "../net" }
 textwrap = { version = "0.13", features = ["terminal_size"] }
 toml = "0.5"
 
