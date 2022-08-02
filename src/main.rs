@@ -10,7 +10,6 @@ use clap::{
 };
 use stamp_core::{
     identity::{
-        keychain::Key,
         IdentityID,
         RelationshipType,
     },
@@ -44,11 +43,11 @@ impl TypedValueParser for MultiaddrParser {
 pub struct SyncToken {
     pub id: String,
     pub channel: String,
-    pub shared_key: Option<Key>,
+    pub shared_key: Option<String>,
 }
 impl SyncToken {
     /// Create a new `SyncToken`
-    pub fn new(id: String, channel: String, shared_key: Option<Key>) -> Self {
+    pub fn new(id: String, channel: String, shared_key: Option<String>) -> Self {
         Self { id, channel, shared_key }
     }
 }
@@ -69,15 +68,7 @@ impl TypedValueParser for SyncTokenParser {
             .ok_or(clap::Error::raw(clap::ErrorKind::InvalidValue, "Invalid token given"))?;
         let channel = parts.get(1)
             .ok_or(clap::Error::raw(clap::ErrorKind::InvalidValue, "Invalid token given"))?;
-        let shared_key = if let Some(base64_key) = parts.get(2) {
-            let bytes = stamp_core::util::base64_decode(base64_key)
-                .map_err(|e| clap::Error::raw(clap::ErrorKind::InvalidValue, format!("error deserializing key: {}", e)))?;
-            let key = Key::deserialize(&bytes)
-                .map_err(|e| clap::Error::raw(clap::ErrorKind::InvalidValue, format!("error deserializing key: {}", e)))?;
-            Some(key)
-        } else {
-            None
-        };
+        let shared_key = parts.get(2).map(|x| String::from(*x));
         Ok(Self::Value::new(String::from(*id), String::from(*channel), shared_key))
     }
 }
