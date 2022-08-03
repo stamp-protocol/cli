@@ -41,14 +41,14 @@ impl TypedValueParser for MultiaddrParser {
 /// on public systems (the "cLoUd!")
 #[derive(Debug, Clone)]
 pub struct SyncToken {
-    pub id: String,
+    pub identity_id: String,
     pub channel: String,
     pub shared_key: Option<String>,
 }
 impl SyncToken {
     /// Create a new `SyncToken`
-    pub fn new(id: String, channel: String, shared_key: Option<String>) -> Self {
-        Self { id, channel, shared_key }
+    pub fn new(identity_id: String, channel: String, shared_key: Option<String>) -> Self {
+        Self { identity_id, channel, shared_key }
     }
 }
 
@@ -64,12 +64,12 @@ impl TypedValueParser for SyncTokenParser {
     fn parse_ref(&self, _cmd: &Command<'_>, _arg: Option<&Arg<'_>>, value: &OsStr) -> Result<Self::Value, clap::error::Error> {
         let converted = value.to_string_lossy();
         let parts = converted.split(':').collect::<Vec<_>>();
-        let id = parts.get(0)
+        let identity_id = parts.get(0)
             .ok_or(clap::Error::raw(clap::ErrorKind::InvalidValue, "Invalid token given"))?;
         let channel = parts.get(1)
             .ok_or(clap::Error::raw(clap::ErrorKind::InvalidValue, "Invalid token given"))?;
         let shared_key = parts.get(2).map(|x| String::from(*x));
-        Ok(Self::Value::new(String::from(*id), String::from(*channel), shared_key))
+        Ok(Self::Value::new(String::from(*identity_id), String::from(*channel), shared_key))
     }
 }
 
@@ -729,21 +729,6 @@ fn run() -> Result<(), String> {
                 .setting(AppSettings::SubcommandRequiredElseHelp)
                 .after_help("EXAMPLE:\n    # run this on the device that has your full identity\n    stamp sync token -b\n        Your token is: TQzq9RCLXhcNqoqD\n    # run this on a home or public server\n    stamp sync listen TQzq9RCLXhcNqoqD\n        Listening on 44.55.66.77:5757\n    # run this on the device you ran `stamp sync token` on\n    stamp sync run --join 44.55.66.77:5757\n        Syncing!")
                 .subcommand(
-                    SubCommand::with_name("run")
-                        .setting(AppSettings::DisableVersion)
-                        .about("Runs the private sync. On the first run, you will have to specify a listener via --join, but afterwards the listener(s) will be saved and you can omit the --join option.")
-                        .arg(id_arg("The ID of the identity we are syncing. This overrides the configured default identity."))
-                        .arg(Arg::with_name("token")
-                            .short('t')
-                            .long("token")
-                            .takes_value(true)
-                            .help("The full syncing token (generated on your primary devices via `stamp sync token`). This option only needs to be used if syncing your identity on a new device for the first time."))
-                        .arg(Arg::with_name("TOKEN")
-                            .index(1)
-                            .required(true)
-                            .help("The token you got from running `stamp sync new`"))
-                )
-                .subcommand(
                     SubCommand::with_name("listen")
                         .setting(AppSettings::DisableVersion)
                         .about("Start a long-lived private syncing peer that your devices can talk to.")
@@ -752,7 +737,6 @@ fn run() -> Result<(), String> {
                             .required(true)
                             .value_parser(SyncTokenParser::new())
                             .help("The token you got from running `stamp sync token -b`"))
-                        .arg(id_arg("The ID of the identity we are syncing. This can be ommitted for blind or uninitiated peers."))
                         .arg(Arg::with_name("bind")
                             .short('b')
                             .long("bind")
@@ -767,7 +751,25 @@ fn run() -> Result<(), String> {
                             .long("join")
                             .takes_value(true)
                             .value_parser(MultiaddrParser::new())
-                            .value_name("/dns/boot.stampnet.org/tcp/5757")
+                            .value_name("/dns/boot1.stampnet.org/tcp/5757")
+                            .help("Join an existing node. This can be a node you own, or a public relay which allows secure communication between your personal nodes even behind firewalls. Can be specified multiple times."))
+                )
+                .subcommand(
+                    SubCommand::with_name("run")
+                        .setting(AppSettings::DisableVersion)
+                        .about("Runs the private sync. On the first run, you will have to specify a listener via --join, but afterwards the listener(s) will be saved and you can omit the --join option.")
+                        .arg(id_arg("The ID of the identity we are syncing. This overrides the configured default identity."))
+                        .arg(Arg::with_name("TOKEN")
+                            .index(1)
+                            .value_parser(SyncTokenParser::new())
+                            .help("The full syncing token you got from running `stamp sync token`. Only needs to be specified once per identity."))
+                        .arg(Arg::with_name("join")
+                            .action(clap::ArgAction::Append)
+                            .short('j')
+                            .long("join")
+                            .takes_value(true)
+                            .value_parser(MultiaddrParser::new())
+                            .value_name("/dns/boot1.stampnet.org/tcp/5757")
                             .help("Join an existing node. This can be a node you own, or a public relay which allows secure communication between your personal nodes even behind firewalls."))
                 )
                 .subcommand(
@@ -1240,11 +1242,6 @@ fn run() -> Result<(), String> {
         }
         Some(("sync", args)) => {
             match args.subcommand() {
-                Some(("join", args)) => {
-                    let token = args.value_of("TOKEN")
-                        .ok_or(format!("Must specify a join token"))?;
-                    println!("SYNC JOIN: {:?}", token);
-                }
                 Some(("listen", args)) => {
                     let token = args.get_one::<SyncToken>("TOKEN")
                         .ok_or(format!("Must specify a join token"))?
@@ -1258,6 +1255,27 @@ fn run() -> Result<(), String> {
                         .map(|x| x.clone())
                         .collect::<Vec<_>>();
                     commands::sync::listen(&token, bind, join)?;
+                }
+                Some(("run", args)) => {
+                    let id = args.get_one::<String>("identity")
+                        .map(|x| String::from(x))
+                        .or_else(|| {
+                            if let Some(id_full) = conf.default_identity.as_ref() {
+                                eprintln!("Selecting default identity {} (override with `--id <ID>`)\n", IdentityID::short(&id_full));
+                            }
+                            conf.default_identity.clone()
+                        });
+                    let token = args.get_one::<SyncToken>("TOKEN")
+                        .map(|x| x.clone());
+                    if id.is_none() && token.is_none() {
+                        Err(format!("Please specify either --identity or <TOKEN>"))?;
+                    }
+                    let join = args.get_many::<Multiaddr>("join")
+                        .into_iter()
+                        .flatten()
+                        .map(|x| x.clone())
+                        .collect::<Vec<_>>();
+                    commands::sync::run(id, token, join)?;
                 }
                 Some(("token", args)) => {
                     let id = id_val(args)?;

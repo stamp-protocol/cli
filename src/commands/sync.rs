@@ -58,8 +58,41 @@ pub(crate) fn listen(token: &SyncToken, bind: Multiaddr, join: Vec<Multiaddr>) -
     } else {
         None
     };
-    stamp_aux::sync::listen(&token.id, &token.channel, shared_key, bind, join)
+    stamp_aux::sync::listen(&token.identity_id, &token.channel, shared_key, bind, join)
         .map_err(|e| format!("Problem starting listener: {}", e))?;
+    Ok(())
+}
+
+/// Run the sync. This is basically like [listen()][listen] but it quits after
+/// grabbing the first round of identity transactions.
+pub(crate) fn run(id: Option<String>, token_maybe: Option<SyncToken>, join: Vec<Multiaddr>) -> Result<(), String> {
+    stamp_aux::util::setup_tracing()
+        .map_err(|e| format!("Error initializing tracing: {}", e))?;
+    let (id_str, shared_key) = match (token_maybe.as_ref(), id) {
+        (Some(SyncToken { ref identity_id, shared_key: Some(ref base64_key), ..}), _) => {
+            let bytes = stamp_core::util::base64_decode(base64_key)
+                .map_err(|e| format!("Error decoding shared key: {}", e))?;
+            let key = SecretKey::new_xchacha20poly1305_from_slice(&bytes[..])
+                .map_err(|e| format!("Error decoding shared key: {}", e))?;
+            (identity_id.clone(), key)
+        }
+        (None, Some(id)) => {
+            let (master_key, transactions) = claim_pre_noval(&id)?;
+            let identity = util::build_identity(&transactions)?;
+            let id_str = id_str!(identity.id())?;
+            let key = identity.keychain()
+                .subkey_by_name("stamp/sync")
+                .map(|x| x.key().as_secretkey().clone())
+                .flatten()
+                .map(|x| x.open(&master_key))
+                .transpose()
+                .map_err(|e| format!("Error opening sync key: {}", e))?
+                .ok_or(format!("Missing stamp/sync subkey for identity {} (try using a full sync token instead)", id_str))?;
+            (id_str, key)
+        }
+        _ => Err(format!("Error selecting identity"))?,
+    };
+    println!("id/key: {:?} / {:?}", id_str, shared_key);
     Ok(())
 }
 
