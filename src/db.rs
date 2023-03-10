@@ -9,9 +9,8 @@ pub fn ensure_schema() -> Result<(), String> {
         .map_err(|e| format!("Error initializing database: {}", e))
 }
 
-pub fn save_identity(transactions: Transactions) -> Result<(), String> {
+pub fn save_identity(transactions: Transactions) -> Result<Transactions, String> {
     db::save_identity(transactions)
-        .map(|_| ())
         .map_err(|e| format!("Problem saving identity: {}", e))
 }
 

@@ -55,7 +55,7 @@ pub fn verify(input_signature: &str, input_message: Option<&str>) -> Result<(), 
     let transactions = db::load_identity(identity_id)?
         .ok_or(format!("Identity {} not found. Have you imported it?", IdentityID::short(&id_str)))?;
     let identity = util::build_identity(&transactions)?;
-    let subkey = identity.keychain().subkey_by_keyid(&key_id.as_string())
+    let subkey = identity.keychain().subkey_by_keyid(&key_id)
         .ok_or(format!("Signing key {} not found in identity {}", key_id.as_string(), IdentityID::short(&id_str)))?;
     let res = match &signature {
         Signature::Detached { .. } => {

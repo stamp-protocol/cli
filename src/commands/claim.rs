@@ -6,20 +6,22 @@ use crate::{
 };
 use prettytable::Table;
 use stamp_core::{
-    crypto::key::SecretKey,
-    dag::Transactions,
+    crypto::base::SecretKey,
+    dag::{TransactionID, Transactions},
     identity::{
+        Claim,
         ClaimID,
         ClaimSpec,
-        ClaimContainer,
         IdentityID,
         RelationshipType,
     },
     private::MaybePrivate,
     rasn::{Encode, Decode},
-    util::{Date, Url, Public, BinaryVec},
+    util::{Date, Url, Public, BinaryVec, Timestamp},
 };
 use std::convert::TryFrom;
+use std::ops::Deref;
+use std::str::FromStr;
 
 fn prompt_claim_value(prompt: &str) -> Result<String, String> {
     let value: String = dialoguer::Input::new()
@@ -67,10 +69,10 @@ pub fn check(claim_id: &str) -> Result<(), String> {
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
     let claim = identity.claims().iter()
-        .find(|x| id_str!(x.claim().id()).map(|x| x.starts_with(claim_id)) == Ok(true))
+        .find(|x| id_str!(x.id()).map(|x| x.starts_with(claim_id)) == Ok(true))
         .ok_or(format!("Couldn't find the claim {} in identity {}", claim_id, IdentityID::short(&id_str)))?;
-    let claim_id_str = id_str!(claim.claim().id())?;
-    match stamp_aux::claim::check_claim(&transactions, claim.claim()) {
+    let claim_id_str = id_str!(claim.id())?;
+    match stamp_aux::claim::check_claim(&transactions, claim) {
         Ok(url) => {
             let green = dialoguer::console::Style::new().green();
             println!("\nThe claim {} has been {}!\n", ClaimID::short(&claim_id_str), green.apply_to("verified"));
@@ -88,9 +90,9 @@ pub fn check(claim_id: &str) -> Result<(), String> {
 pub fn view(id: &str, claim_id: &str, output: &str) -> Result<(), String> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
-    let mut found: Option<ClaimContainer> = None;
+    let mut found: Option<Claim> = None;
     for claim in identity.claims() {
-        let id_str = id_str!(claim.claim().id())?;
+        let id_str = id_str!(claim.id())?;
         if id_str.starts_with(claim_id) {
             found = Some(claim.clone());
             break;
@@ -109,9 +111,10 @@ pub fn view(id: &str, claim_id: &str, output: &str) -> Result<(), String> {
         Ok(master_key)
     };
 
-    let output_bytes = match claim.claim().spec() {
-        ClaimSpec::Identity(id) => {
-            Vec::from(id_str!(id)?.as_bytes())
+    let output_bytes = match claim.spec() {
+        ClaimSpec::Identity(maybe) => {
+            let val = unwrap_maybe(maybe, masterkey_fn)?;
+            Vec::from(id_str!(&val)?.as_bytes())
         }
         ClaimSpec::Name(maybe) => {
             let val = unwrap_maybe(maybe, masterkey_fn)?;
@@ -137,7 +140,7 @@ pub fn view(id: &str, claim_id: &str, output: &str) -> Result<(), String> {
             let val = unwrap_maybe(maybe, masterkey_fn)?;
             Vec::from(val.as_str().as_bytes())
         }
-        ClaimSpec::HomeAddress(maybe) => {
+        ClaimSpec::Address(maybe) => {
             let val = unwrap_maybe(maybe, masterkey_fn)?;
             Vec::from(val.as_bytes())
         }
@@ -158,17 +161,29 @@ pub fn list(id: &str, private: bool, verbose: bool) -> Result<(), String> {
     } else {
         None
     };
-    print_claims_table(identity.claims(), master_key_maybe, verbose);
+    let ts_fake = Timestamp::from_str("0000-01-01T00:00:00.000Z")
+        .map_err(|e| format!("Error creating fake timestamp: {:?}", e))?;
+    let claim_list = identity.claims().iter()
+        .map(|claim| {
+            let claim_id: TransactionID = claim.id().deref().clone();
+            let ts = transactions.iter()
+                .find(|t| t.id() == &claim_id)
+                .map(|t| t.entry().created().clone())
+                .unwrap_or_else(|| ts_fake.clone());
+            (claim.clone(), ts)
+        })
+        .collect::<Vec<_>>();
+    print_claims_table(&claim_list, master_key_maybe, verbose);
     Ok(())
 }
 
-pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option<SecretKey>, verbose: bool) {
+pub fn print_claims_table(claims: &Vec<(Claim, Timestamp)>, master_key_maybe: Option<SecretKey>, verbose: bool) {
     let mut table = Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
     let id_field = if verbose { "ID" } else { "ID (short)" };
     table.set_titles(row![id_field, "Type", "Value", "Created", "# stamps"]);
-    for claim in claims {
-        let (id_full, id_short) = id_str_split!(claim.claim().id());
+    for (claim, created_ts) in claims {
+        let (id_full, id_short) = id_str_split!(claim.id());
         macro_rules! extract_str {
             ($maybe:expr, $tostr:expr) => {
                 if let Some(master_key) = master_key_maybe.as_ref() {
@@ -199,11 +214,11 @@ pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option
                 extract_str!($maybe, |x| x)
             };
         }
-        let (ty, val) = match claim.claim().spec() {
-            ClaimSpec::Identity(id) => {
-                let (id_full, id_short) = id_str_split!(id);
-                ("identity", if verbose { id_full } else { id_short })
-            }
+        let (ty, val) = match claim.spec() {
+            ClaimSpec::Identity(id) => ("identity", extract_str!(id, |x: IdentityID| {
+                let (id_full, id_short) = id_str_split!(&x);
+                if verbose { id_full } else { id_short }
+            })),
             ClaimSpec::Name(name) => ("name", extract_str!(name)),
             ClaimSpec::Birthday(birthday) => ("birthday", extract_str!(birthday, |x: Date| x.to_string())),
             ClaimSpec::Email(email) => ("email", extract_str!(email)),
@@ -211,7 +226,7 @@ pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option
             ClaimSpec::Pgp(pgp) => ("pgp", extract_str!(pgp)),
             ClaimSpec::Domain(domain) => ("domain", extract_str!(domain)),
             ClaimSpec::Url(url) => ("url", extract_str!(url, |x: Url| String::from(x))),
-            ClaimSpec::HomeAddress(address) => ("address", extract_str!(address)),
+            ClaimSpec::Address(address) => ("address", extract_str!(address)),
             ClaimSpec::Relation(relation) => {
                 let rel_str = match relation {
                     MaybePrivate::Public(relationship) => {
@@ -229,7 +244,7 @@ pub fn print_claims_table(claims: &Vec<ClaimContainer>, master_key_maybe: Option
             }
             _ => ("<unknown>", String::from("<unknown>")),
         };
-        let created = claim.claim().created().local().format("%b %d, %Y").to_string();
+        let created = created_ts.local().format("%b %d, %Y").to_string();
         table.add_row(row![
             if verbose { &id_full } else { &id_short },
             ty,

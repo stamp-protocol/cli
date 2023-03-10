@@ -1,14 +1,17 @@
 use crate::{
     db,
-    util
+    util,
 };
 use indicatif::{ProgressBar, ProgressStyle};
 use prettytable::Table;
+use stamp_aux::{
+    db::stage_transaction,
+};
 use stamp_core::{
-    crypto::key::{SecretKey},
+    crypto::base::{SecretKey},
     dag::Transactions,
-    identity::{IdentityID, Identity, PublishedIdentity},
-    util::{Timestamp, SerdeBinary},
+    identity::{IdentityID, Identity},
+    util::{Timestamp, SerdeBinary, SerText},
 };
 use std::convert::TryFrom;
 
@@ -75,7 +78,7 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
             .template("[{spinner:.green}] {msg}")
     );
     spinner.set_message("Starting vanity ID search, this might take a while.");
-    let (tmp_master_key, transactions, now) = stamp_aux::id::create_vanity(regex, contains, prefix, |counter| {
+    let (tmp_master_key, transactions, now) = stamp_aux::id::create_personal_vanity(regex, contains, prefix, |counter| {
         spinner.set_message(&format!("Searched {} IDs", counter));
     }).map_err(|e| format!("Error generating vanity id: {}", e))?;
     spinner.finish();
@@ -86,17 +89,24 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
     Ok((tmp_master_key, transactions, now))
 }
 
-pub fn publish(id: &str) -> Result<String, String> {
+pub fn publish(id: &str, stage: bool, sign_with: Option<&str>) -> Result<String, String> {
     let transactions = try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     let now = Timestamp::now();
-    let published = PublishedIdentity::publish(&master_key, now, transactions)
-        .map_err(|e| format!("Error creating published identity: {:?}", e))?;
-    let serialized = published.serialize()
-        .map_err(|e| format!("Error serializing identity: {:?}", e))?;
-    Ok(serialized)
+    let transaction = transactions.publish(now)
+        .map_err(|e| format!("Error creating publish transaction: {:?}", e))?;
+
+    let signed = util::sign_helper(&identity, transaction, &master_key, stage, sign_with)?;
+    if stage {
+        let transaction = stage_transaction(identity.id(), signed)
+            .map_err(|e| format!("Error staging transaction: {:?}", e))?;
+        id_str!(transaction.id())
+    } else {
+        signed.serialize_text()
+            .map_err(|e| format!("Error serializing transaction: {:?}", e))
+    }
 }
 
 pub fn export_private(id: &str) -> Result<Vec<u8>, String> {
@@ -143,7 +153,7 @@ pub fn view(search: &str) -> Result<String, String> {
     }
     let transactions = identities[0].clone();
     let identity = util::build_identity(&transactions)?;
-    let serialized = identity.serialize()
+    let serialized = identity.serialize_text()
         .map_err(|e| format!("Problem serializing identity: {:?}", e))?;
     Ok(serialized)
 }
@@ -153,18 +163,16 @@ pub(crate) fn print_identities_table(identities: &Vec<Identity>, verbose: bool) 
     let mut table = Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
     let id_field = if verbose { "ID" } else { "ID (short)" };
-    table.set_titles(row!["Mine", id_field, "Nickname", "Name", "Email", "Created"]);
+    table.set_titles(row!["Mine", id_field, "Name", "Email", "Created"]);
     for identity in identities {
         let (id_full, id_short) = id_str_split!(identity.id());
-        let nickname = identity.nickname_maybe().unwrap_or(String::from(""));
-        let name = identity.name_maybe().unwrap_or(String::from(""));
-        let email = identity.email_maybe().unwrap_or(String::from(""));
+        let name = identity.names().get(0).map(|x| x.clone()).unwrap_or_else(|| String::from(""));
+        let email = identity.emails().get(0).map(|x| x.clone()).unwrap_or_else(|| String::from(""));
         let created = identity.created().local().format("%b %d, %Y").to_string();
         let owned = if identity.is_owned() { "x" } else { "" };
         table.add_row(row![
             owned,
             if verbose { &id_full } else { &id_short },
-            nickname,
             name,
             email,
             created,

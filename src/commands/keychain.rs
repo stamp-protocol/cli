@@ -1,5 +1,5 @@
 use crate::{
-    commands::id,
+    commands::{id, dag},
     db,
     util,
 };
@@ -7,77 +7,225 @@ use prettytable::Table;
 use stamp_core::{
     crypto::{
         self,
-        key::{SecretKey},
+        base::{KeyID, SecretKey},
     },
     identity::{
+        ExtendKeypair,
         IdentityID,
         Identity,
-        keychain::{Key, Subkey},
+        keychain::{AdminKey, AdminKeypair, Key, RevocationReason, Subkey},
     },
-    private::Private,
-    util::{Timestamp, base64_encode, base64_decode},
+    private::PrivateWithMac,
+    util::{Timestamp, Public, base64_encode, base64_decode},
 };
 use std::convert::TryFrom;
 
-pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>) -> Result<(), String> {
+pub struct PrintableKey {
+    key_id: KeyID,
+    ty: String,
+    name: String,
+    description: Option<String>,
+    revocation: Option<RevocationReason>,
+    has_private: bool,
+}
+
+impl From<&AdminKey> for PrintableKey {
+    fn from(key: &AdminKey) -> Self {
+        PrintableKey {
+            key_id: key.key().key_id(),
+            ty: "admin".into(),
+            name: key.name().clone(),
+            description: key.description().clone(),
+            revocation: key.revocation().clone(),
+            has_private: key.has_private(),
+        }
+    }
+}
+
+impl From<&Subkey> for PrintableKey {
+    fn from(key: &Subkey) -> Self {
+        let ty = match key.key() {
+            Key::Sign(..) => "sign",
+            Key::Crypto(..) => "crypto",
+            Key::Secret(..) => "secret",
+        };
+        PrintableKey {
+            key_id: key.key_id(),
+            ty: ty.into(),
+            name: key.name().clone(),
+            description: key.description().clone(),
+            revocation: key.revocation().clone(),
+            has_private: key.has_private(),
+        }
+    }
+}
+
+pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
     identity.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
-    let key = match ty {
-        "sign" => {
-            let new_key = crypto::key::SignKeypair::new_ed25519(&master_key)
+    let transaction = match ty {
+        "admin" => {
+            let admin_keypair = AdminKeypair::new_ed25519(&master_key)
                 .map_err(|e| format!("Error generating key: {:?}", e))?;
-            Key::new_sign(new_key)
+            let admin_key = AdminKey::new(admin_keypair, name, desc);
+            transactions.add_admin_key(Timestamp::now(), admin_key)
+                .map_err(|e| format!("Problem adding key to identity: {:?}", e))?
         }
-        "crypto" => {
-            let new_key = crypto::key::CryptoKeypair::new_curve25519xchacha20poly1305(&master_key)
-                .map_err(|e| format!("Error generating key: {:?}", e))?;
-            Key::new_crypto(new_key)
-        }
-        "secret" => {
-            let rand_key = crypto::key::SecretKey::new_xchacha20poly1305()
-                .map_err(|e| format!("Unable to generate key: {}", e))?;
-            let new_key = Private::seal(&master_key, &rand_key)
-                .map_err(|e| format!("Error generating key: {:?}", e))?;
-            Key::new_secret(new_key)
+        "sign" | "crypto" | "secret" => {
+            let key = match ty {
+                "sign" => {
+                    let new_key = crypto::base::SignKeypair::new_ed25519(&master_key)
+                        .map_err(|e| format!("Error generating key: {:?}", e))?;
+                    Key::new_sign(new_key)
+                }
+                "crypto" => {
+                    let new_key = crypto::base::CryptoKeypair::new_curve25519xchacha20poly1305(&master_key)
+                        .map_err(|e| format!("Error generating key: {:?}", e))?;
+                    Key::new_crypto(new_key)
+                }
+                "secret" => {
+                    let rand_key = crypto::base::SecretKey::new_xchacha20poly1305()
+                        .map_err(|e| format!("Unable to generate key: {}", e))?;
+                    let new_key = PrivateWithMac::seal(&master_key, rand_key)
+                        .map_err(|e| format!("Error generating key: {:?}", e))?;
+                    Key::new_secret(new_key)
+                }
+                _ => Err(format!("Invalid key type: {}", ty))?,
+            };
+            transactions.add_subkey(Timestamp::now(), key, name, desc)
+                .map_err(|e| format!("Problem adding key to identity: {:?}", e))?
         }
         _ => Err(format!("Invalid key type: {}", ty))?,
     };
-    let transactions_mod = transactions.add_subkey(&master_key, Timestamp::now(), key, name, desc)
-        .map_err(|e| format!("Problem adding key to identity: {:?}", e))?;
-    let identity_mod = util::build_identity(&transactions_mod)?;
-    let added_key = identity_mod.keychain().subkeys().iter()
-        .rev()
-        .find(|x| x.name() == name)
-        .ok_or(format!("Problem finding new key"))?;
-    db::save_identity(transactions_mod)?;
-    println!("New {} subkey added: {}!", ty, added_key.name());
+    let signed = util::sign_helper(&identity, transaction, &master_key, stage, sign_with)?;
+    dag::save_or_stage(transactions, signed, stage)?;
     Ok(())
 }
 
-pub fn list(id: &str, search: Option<&str>) -> Result<(), String> {
+pub fn list(id: &str, ty: Option<&str>, revoked: bool, search: Option<&str>) -> Result<(), String> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
-    let keys = identity.keychain().subkeys().iter()
-        .filter_map(|x| {
-            if let Some(search) = search {
-                if x.name().contains(search) {
-                    Some(x)
-                } else {
-                    None
-                }
-            } else {
-                Some(x)
+    let mut keys: Vec<PrintableKey> = Vec::new();
+    let has_search = search.is_some();
+    let search_str = search.unwrap_or("");
+    if ty.is_none() || ty == Some("admin") {
+        for k in identity.keychain().admin_keys() {
+            let mut include = true;
+            if include && has_search {
+                include = k.name().contains(search_str);
             }
-        })
-        .collect::<Vec<_>>();
+            if include && !revoked {
+                include = k.revocation().is_none();
+            }
+            if include {
+                keys.push(k.into());
+            }
+        }
+    }
+    if ty.is_none() || ty == Some("subkeys") || ty == Some("sign") || ty == Some("crypto") || ty == Some("secret") {
+        for k in identity.keychain().subkeys() {
+            let mut include = true;
+            if include && ty == Some("sign") {
+                include = k.key().as_signkey().is_some();
+            }
+            if include && ty == Some("crypto") {
+                include = k.key().as_cryptokey().is_some();
+            }
+            if include && ty == Some("secret") {
+                include = k.key().as_secretkey().is_some();
+            }
+            if include && !revoked {
+                include = k.revocation().is_none();
+            }
+            if include {
+                keys.push(k.into());
+            }
+        }
+    }
     print_keys_table(&keys, false);
     Ok(())
 }
 
-pub fn delete(id: &str, search: &str) -> Result<(), String> {
+pub fn update(id: &str, search: &str, name: Option<&str>, desc: Option<Option<&str>>, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let transactions = id::try_load_single_identity(id)?;
+    let identity = util::build_identity(&transactions)?;
+    let id_str = id_str!(identity.id())?;
+    let key_admin = identity.keychain().admin_key_by_name(search)
+        .or_else(|| identity.keychain().admin_key_by_keyid_str(search));
+    let key_subkey = identity.keychain().subkey_by_name(search)
+        .or_else(|| identity.keychain().subkey_by_keyid_str(search));
+
+    if key_admin.is_none() && key_subkey.is_none() {
+        Err(format!("Cannot find key {} in identity {}", search, IdentityID::short(&id_str)))?;
+    }
+
+    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
+    transactions.test_master_key(&master_key)
+        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+
+    let (transaction, key_id) = match (key_admin, key_subkey) {
+        (Some(admin), _) => {
+            let trans = transactions.edit_admin_key(Timestamp::now(), admin.key_id(), name, desc)
+                .map_err(|e| format!("Error updating admin key: {:?}", e))?;
+            (trans, admin.key().key_id())
+        }
+        (_, Some(subkey)) => {
+            let trans = transactions.edit_subkey(Timestamp::now(), subkey.key_id(), name, desc)
+                .map_err(|e| format!("Error updating subkey: {:?}", e))?;
+            (trans, subkey.key_id())
+        }
+        _ => Err(format!("Unreachable path. Odd."))?,
+    };
+    let signed = util::sign_helper(&identity, transaction, &master_key, stage, sign_with)?;
+    dag::save_or_stage(transactions, signed, stage)?;
+    Ok(())
+}
+
+pub fn revoke(id: &str, search: &str, reason: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let transactions = id::try_load_single_identity(id)?;
+    let identity = util::build_identity(&transactions)?;
+    let id_str = id_str!(identity.id())?;
+    let key_admin = identity.keychain().admin_key_by_name(search)
+        .or_else(|| identity.keychain().admin_key_by_keyid_str(search));
+    let key_subkey = identity.keychain().subkey_by_name(search)
+        .or_else(|| identity.keychain().subkey_by_keyid_str(search));
+
+    if key_admin.is_none() && key_subkey.is_none() {
+        Err(format!("Cannot find key {} in identity {}", search, IdentityID::short(&id_str)))?;
+    }
+
+    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
+    transactions.test_master_key(&master_key)
+        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+
+    let rev_reason = match reason {
+        "superseded" => RevocationReason::Superseded,
+        "compromised" => RevocationReason::Compromised,
+        "invalid" => RevocationReason::Invalid,
+        _ => RevocationReason::Unspecified,
+    };
+    let (transaction, key_id) = match (key_admin, key_subkey) {
+        (Some(admin), _) => {
+            let trans = transactions.revoke_admin_key(Timestamp::now(), admin.key_id(), rev_reason, None::<String>)
+                .map_err(|e| format!("Error revoking admin key: {:?}", e))?;
+            (trans, admin.key().key_id())
+        }
+        (_, Some(subkey)) => {
+            let trans = transactions.revoke_subkey(Timestamp::now(), subkey.key_id(), rev_reason, None::<String>)
+                .map_err(|e| format!("Error revoking subkey: {:?}", e))?;
+            (trans, subkey.key_id())
+        }
+        _ => Err(format!("Unreachable path. Odd."))?,
+    };
+    let signed = util::sign_helper(&identity, transaction, &master_key, stage, sign_with)?;
+    dag::save_or_stage(transactions, signed, stage)?;
+    Ok(())
+}
+
+pub fn delete_subkey(id: &str, search: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
@@ -93,7 +241,7 @@ pub fn delete(id: &str, search: &str) -> Result<(), String> {
         .ok_or(format!("Cannot find key {} in identity {}", search, IdentityID::short(&id_str)))?
         .clone();
     match key.key() {
-        Key::Secret(..) | Key::ExtensionSecret(..) => {}
+        Key::Secret(..) => {}
         _ => {
             util::print_wrapped("You are about to delete a non-secret key. It's generally a better idea to revoke instead of delete, otherwise it becomes impossible to decrypt old messages or verify old signatures you may have made.\n\n");
             if !util::yesno_prompt("Are you sure you want to delete this key? [y/N]", "n")? {
@@ -101,48 +249,13 @@ pub fn delete(id: &str, search: &str) -> Result<(), String> {
             }
         }
     }
-    match key.key() {
-        Key::Policy(..) | Key::Publish(..) | Key::Root(..) => {
-            println!("");
-            util::print_wrapped("You are about to delete a policy, publish, or root key. This is a terrible idea, unless you're absolutely sure you know what you're doing. This can seriously screw up your identity and render it useless. If you're dead set on this, please at least take a backup first with `stamp id export-private`.\n\n");
-            if !util::yesno_prompt("Are you *really* sure you want to delete this key? [y/N]", "n")? {
-                return Ok(());
-            }
-        }
-        _ => {}
-    }
     let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     transactions.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
-    let transactions_mod = transactions.delete_subkey(&master_key, Timestamp::now(), key.name().clone())
+    let transaction = transactions.delete_subkey(Timestamp::now(), key.key_id())
         .map_err(|e| format!("Problem deleting subkey from keychain: {:?}", e))?;
-    db::save_identity(transactions_mod)?;
-    println!("Key {} removed.", key.name());
-    Ok(())
-}
-
-pub fn revoke(id: &str, search: &str) -> Result<(), String> {
-    let transactions = id::try_load_single_identity(id)?;
-    let identity = util::build_identity(&transactions)?;
-    let id_str = id_str!(identity.id())?;
-    let key = identity.keychain().subkeys().iter()
-        .rev()
-        .find_map(|x| {
-            if x.name() == search {
-                Some(x)
-            } else {
-                None
-            }
-        })
-        .ok_or(format!("Cannot find key {} in identity {}", search, IdentityID::short(&id_str)))?
-        .clone();
-    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
-    transactions.test_master_key(&master_key)
-        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
-    let transactions_mod = transactions.delete_subkey(&master_key, Timestamp::now(), key.name().clone())
-        .map_err(|e| format!("Problem deleting subkey from keychain: {:?}", e))?;
-    db::save_identity(transactions_mod)?;
-    println!("Key {} revoked.", key.name());
+    let signed = util::sign_helper(&identity, transaction, &master_key, stage, sign_with)?;
+    dag::save_or_stage(transactions, signed, stage)?;
     Ok(())
 }
 
@@ -173,7 +286,7 @@ pub fn passwd(id: &str, keyfile: Option<&str>, keyparts: Vec<&str>) -> Result<()
             }
         }
         let key_bytes = key_bytes.ok_or(format!("Could not reconstruct master key."))?;
-        let master_key = crypto::key::SecretKey::new_xchacha20poly1305_from_slice(key_bytes.as_slice())
+        let master_key = crypto::base::SecretKey::new_xchacha20poly1305_from_slice(key_bytes.as_slice())
             .map_err(|e| format!("Problem creating master key: {}", e))?;
         Ok(master_key)
     }
@@ -237,44 +350,32 @@ pub fn keyfile(id: &str, shamir: &str, output: &str) -> Result<(), String> {
     util::write_file(output, shares.join("\n").as_bytes())
 }
 
-pub fn print_keys_table(keys: &Vec<&Subkey>, choice: bool) {
+pub fn print_keys_table(keys: &Vec<PrintableKey>, choice: bool) {
     let mut table = Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
     if choice {
-        table.set_titles(row!["Choose", "Name", "ID", "Type", "Description", "Full"]);
+        table.set_titles(row!["Choose", "Name", "ID", "Type", "Description", "Owned"]);
     } else {
-        table.set_titles(row!["Name", "ID", "Type", "Description", "Full"]);
+        table.set_titles(row!["Name", "ID", "Type", "Description", "Owned"]);
     }
     let mut idx = 0;
     for key in keys {
-        let ty = match key.key() {
-            Key::Policy(..) => "policy",
-            Key::Publish(..) => "publish",
-            Key::Root(..) => "root",
-            Key::Sign(..) => "sign",
-            Key::Crypto(..) => "crypto",
-            Key::Secret(..) => "secret",
-            Key::ExtensionKeypair { .. } => "extension-pair",
-            Key::ExtensionSecret(..) => "extension-secret",
-        };
-        let name = key.name();
-        let id = key.key_id().map(|x| x.as_string()).unwrap_or("".into());
-        let description = key.description().as_ref().map(|x| x.clone()).unwrap_or(String::from(""));
-        let full = if key.key().has_private() { "x" } else { "" };
+        let description = key.description.as_ref().map(|x| x.clone()).unwrap_or(String::from(""));
+        let full = if key.has_private { "x" } else { "" };
         if choice {
             table.add_row(row![
                 format!("{}", idx + 1),
-                name,
-                id,
-                ty,
+                &key.name,
+                &key.key_id,
+                &key.ty,
                 description,
                 full,
             ]);
         } else {
             table.add_row(row![
-                name,
-                id,
-                ty,
+                &key.name,
+                &key.key_id,
+                &key.ty,
                 description,
                 full,
             ]);
@@ -295,7 +396,7 @@ pub fn find_keys_by_search_or_prompt<T, F>(identity: &Identity, key_search: Opti
     }
 
     fn choose_key_from(prompt: &str, keys: &Vec<&Subkey>) -> Option<Subkey> {
-        print_keys_table(&keys, false);
+        print_keys_table(&keys.iter().map(|x| x.clone().into()).collect::<Vec<_>>(), true);
         let choice = util::value_prompt(prompt).ok()?;
         let choice_idx: usize = choice.parse().ok()?;
         if choice_idx > 0 && keys.get(choice_idx - 1).is_some() {
@@ -312,14 +413,11 @@ pub fn find_keys_by_search_or_prompt<T, F>(identity: &Identity, key_search: Opti
                 let keys_from_id = identity.keychain().subkeys().iter()
                     .filter_map(|x| {
                         key_filter(x)?;
-                        x.key_id()
-                            .and_then(|id| {
-                                if id.as_string().starts_with(key_search) {
-                                    Some(x)
-                                } else {
-                                    None
-                                }
-                            })
+                        if x.key_id().as_string().starts_with(key_search) {
+                            Some(x)
+                        } else {
+                            None
+                        }
                     })
                     .map(|x| x.clone())
                     .collect::<Vec<_>>();

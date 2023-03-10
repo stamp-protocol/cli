@@ -1,15 +1,15 @@
 use crate::{
-    commands::id,
+    commands::{dag, id},
     db,
     util,
 };
 use stamp_core::{
-    identity::{ClaimID, StampID, Confidence, Stamp, IdentityID},
+    identity::{ClaimID, StampID, Confidence, StampEntry, IdentityID},
     util::Timestamp,
 };
 use std::convert::TryFrom;
 
-pub fn new(our_identity_id: &str, claim_id: &str) -> Result<String, String> {
+pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
     let our_transactions = id::try_load_single_identity(our_identity_id)?;
     let their_transactions = db::find_identity_by_prefix("claim", claim_id)?
         .ok_or(format!("Identity with claim {} not found", claim_id))?;
@@ -18,7 +18,7 @@ pub fn new(our_identity_id: &str, claim_id: &str) -> Result<String, String> {
     let claim = their_identity.claims()
         .iter()
         .find_map(|x| {
-            match id_str!(x.claim().id()) {
+            match id_str!(x.id()) {
                 Ok(id) => if id.starts_with(claim_id) { Some(x) } else { None },
                 Err(..) => None,
             }
@@ -26,7 +26,7 @@ pub fn new(our_identity_id: &str, claim_id: &str) -> Result<String, String> {
         // weird if we got here, but let's handle it gracefully...
         .ok_or(format!("Claim {} not found in identity {}", claim_id, id_str!(their_identity.id())?))?;
     let their_id_str = id_str!(their_identity.id())?;
-    let claim_id_str = id_str!(claim.claim().id())?;
+    let claim_id_str = id_str!(claim.id())?;
     util::print_wrapped(&format!("You are about to stamp the claim {} made by the identity {}.\n", ClaimID::short(&claim_id_str), IdentityID::short(&their_id_str)));
     util::print_wrapped("Effectively, you are vouching for them and that their claim is true. You can specify your confidence in the claim:\n");
     util::print_wrapped("    none\n");
@@ -60,11 +60,19 @@ pub fn new(our_identity_id: &str, claim_id: &str) -> Result<String, String> {
     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&our_id)), our_identity.created())?;
     our_transactions.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+    let stamp_entry = StampEntry::new(our_identity.id().clone(), their_identity.id().clone(), claim.id().clone(), confidence, expires);
+    let transaction = our_transactions.make_stamp(Timestamp::now(), stamp_entry)
+        .map_err(|e| format!("Error making stamp: {:?}", e))?;
+    let signed = util::sign_helper(&our_identity, transaction, &master_key, stage, sign_with)?;
+    dag::save_or_stage(our_transactions, signed, stage)?;
+    Ok(())
+    /*
     let stamp = our_identity.stamp(&master_key, confidence, Timestamp::now(), their_identity.id(), claim.claim(), expires)
         .map_err(|e| format!("Problem generating stamp: {:?}", e))?;
     let serialized = stamp.serialize()
         .map_err(|e| format!("Problem serializing stamp: {:?}", e))?;
     Ok(serialized)
+    */
 }
 
 //pub fn request(our_identity_id: &str, claim_id: &str, our_crypto_subkey_search: &str, stamper_identity_id: &str, stamper_crypto_subkey_search: &str) -> Result<(), String> {
@@ -72,6 +80,7 @@ pub fn new(our_identity_id: &str, claim_id: &str) -> Result<String, String> {
     //let claim = 
 //}
 
+/*
 pub fn accept(our_identity_id: &str, location: &str) -> Result<(), String> {
     let our_transactions = id::try_load_single_identity(our_identity_id)?;
     let our_identity = util::build_identity(&our_transactions)?;
@@ -89,4 +98,5 @@ pub fn accept(our_identity_id: &str, location: &str) -> Result<(), String> {
     println!("Stamp {} accepted!", StampID::short(&stamp_id_str));
     Ok(())
 }
+*/
 

@@ -106,7 +106,7 @@ pub fn open(id_to: &str, key_search_open: Option<&str>, input: &str, output: &st
             let transactions_from = db::load_identity(signed_msg.signed_by_identity())?
                 .ok_or(format!("The identity that sent this message has not been imported, see the `stamp id import` command"))?;
             let identity_from = util::build_identity(&transactions_from)?;
-            let key_from = identity_from.keychain().subkey_by_keyid(&signed_msg.signed_by_key().as_string())
+            let key_from = identity_from.keychain().subkey_by_keyid(&signed_msg.signed_by_key())
                 .ok_or("The identity that send this message is missing the key used to sign the message")?;
             dry!{
                 { master_key_to, key_to, bytes }

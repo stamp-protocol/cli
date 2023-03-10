@@ -1,11 +1,15 @@
+use stamp_aux::{
+    id::sign_with_optimal_key,
+};
 use stamp_core::{
-    crypto::key::{KDF_OPS_MODERATE, KDF_MEM_MODERATE, SecretKey},
-    dag::Transactions,
+    crypto::base::{KDF_OPS_INTERACTIVE, KDF_OPS_MODERATE, KDF_MEM_INTERACTIVE, KDF_MEM_MODERATE, SecretKey},
+    dag::{Transaction, Transactions},
     identity::Identity,
 };
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use textwrap;
+use tracing::{warn};
 
 pub(crate) fn term_maxwidth() -> usize { 120 }
 
@@ -51,15 +55,41 @@ macro_rules! id_str_split {
     }
 }
 
+pub(crate) fn sign_helper(identity: &Identity, transaction: Transaction, master_key: &SecretKey, stage: bool, sign_with: Option<&str>) -> Result<Transaction, String> {
+    match (stage, sign_with) {
+        (true, Some(key_str)) => {
+            let admin = identity.keychain().admin_key_by_keyid_str(key_str)
+                .or_else(|| identity.keychain().admin_key_by_name(key_str))
+                .ok_or(String::from("Admin key not found"))?;
+            let transaction = transaction.sign(master_key, admin)
+                .map_err(|e| format!("Error signing transaction: {:?}", e))?;
+            Ok(transaction)
+        }
+        _ => {
+            let transaction = sign_with_optimal_key(&identity, &master_key, transaction)
+                .map_err(|e| format!("Error signing transaction: {:?}", e))?;
+            Ok(transaction)
+        }
+    }
+}
+
 pub(crate) fn build_identity(transactions: &Transactions) -> Result<Identity, String> {
     transactions.build_identity()
         .map_err(|e| format!("Problem building identity: {:?}", e))
 }
 
 fn derive_master(passphrase: &str, now: &stamp_core::util::Timestamp) -> Result<SecretKey, String> {
-    let salt_bytes = stamp_core::util::hash(format!("{}", now.format("%+")).as_bytes())
+    let salt_bytes = stamp_core::crypto::base::Hash::new_blake2b(format!("{}", now.format("%+")).as_bytes())
         .map_err(|err| format!("Error deriving master key salt: {:?}", err))?;
-    let master_key = stamp_core::crypto::key::derive_secret_key(passphrase.as_bytes(), salt_bytes.as_ref(), KDF_OPS_MODERATE, KDF_MEM_MODERATE)
+    let quick = std::env::var("STAMP_KDF_QUICK")
+        .map(|x| x == "1")
+        .unwrap_or(false);
+    if quick {
+        warn!("Using quick KDF parameters. This is only ok for dev/testing.");
+    }
+    let ops = if quick { KDF_OPS_INTERACTIVE } else { KDF_OPS_MODERATE };
+    let mem = if quick { KDF_MEM_INTERACTIVE } else { KDF_MEM_MODERATE };
+    let master_key = stamp_core::crypto::base::derive_secret_key(passphrase.as_bytes(), salt_bytes.as_bytes(), ops, mem)
         .map_err(|err| format!("Problem generating master key: {:?}", err))?;
     Ok(master_key)
 }
@@ -72,7 +102,7 @@ pub(crate) fn passphrase_prompt<T: Into<String>>(prompt: T, now: &stamp_core::ut
 }
 
 pub(crate) fn with_new_passphrase<F, T>(prompt: &str, gen_fn: F, now: Option<stamp_core::util::Timestamp>) -> Result<(T, SecretKey), String>
-    where F: FnOnce(&stamp_core::crypto::key::SecretKey, stamp_core::util::Timestamp) -> Result<T, String>,
+    where F: FnOnce(&stamp_core::crypto::base::SecretKey, stamp_core::util::Timestamp) -> Result<T, String>,
 {
     let passphrase = dialoguer::Password::new().with_prompt(prompt).interact()
         .map_err(|err| format!("There was an error grabbing your passphrase: {:?}", err))?;
