@@ -31,6 +31,7 @@ fn prompt_claim_value(prompt: &str) -> Result<String, String> {
     Ok(value)
 }
 
+// TODO: this has nothing to do with claims...? Move somewhere more appropriate.
 pub(crate) fn claim_pre_noval(id: &str) -> Result<(SecretKey, Transactions), String> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
@@ -181,7 +182,7 @@ pub fn print_claims_table(claims: &Vec<(Claim, Timestamp)>, master_key_maybe: Op
     let mut table = Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
     let id_field = if verbose { "ID" } else { "ID (short)" };
-    table.set_titles(row![id_field, "Type", "Value", "Created", "# stamps"]);
+    table.set_titles(row![id_field, "Name", "Type", "Value", "Created", "# stamps"]);
     for (claim, created_ts) in claims {
         let (id_full, id_short) = id_str_split!(claim.id());
         macro_rules! extract_str {
@@ -214,6 +215,7 @@ pub fn print_claims_table(claims: &Vec<(Claim, Timestamp)>, master_key_maybe: Op
                 extract_str!($maybe, |x| x)
             };
         }
+        let name = claim.name().as_ref().map(|x| x.clone()).unwrap_or("-".into());
         let (ty, val) = match claim.spec() {
             ClaimSpec::Identity(id) => ("identity", extract_str!(id, |x: IdentityID| {
                 let (id_full, id_short) = id_str_split!(&x);
@@ -247,6 +249,7 @@ pub fn print_claims_table(claims: &Vec<(Claim, Timestamp)>, master_key_maybe: Op
         let created = created_ts.local().format("%b %d, %Y").to_string();
         table.add_row(row![
             if verbose { &id_full } else { &id_short },
+            name,
             ty,
             val,
             created,

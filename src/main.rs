@@ -395,6 +395,22 @@ fn run() -> Result<(), String> {
                             .help("Verbose output, with long-form IDs."))
                 )
                 .subcommand(
+                    Command::new("rename")
+                        .about("Rename a claim in your identity.")
+                        .alias("edit")
+                        .arg(id_arg("The ID of the identity we are removing the claim from. This overrides the configured default identity."))
+                        .arg(stage_arg())
+                        .arg(signwith_arg())
+                        .arg(Arg::new("CLAIM")
+                            .required(true)
+                            .index(1)
+                            .help("The ID of the claim we're renaming."))
+                        .arg(Arg::new("NAME")
+                            .required(true)
+                            .index(2)
+                            .help("The name we're setting for the claim."))
+                )
+                .subcommand(
                     Command::new("delete")
                         .about("Remove a claim from your identity.")
                         .arg(id_arg("The ID of the identity we are removing the claim from. This overrides the configured default identity."))
@@ -421,11 +437,6 @@ fn run() -> Result<(), String> {
                             .index(1)
                             .required(true)
                             .help("The ID (prefix or full) of the claim we wish to stamp."))
-                        .arg(Arg::new("output")
-                            .short('o')
-                            .long("output")
-                            .num_args(1)
-                            .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
                         .arg(stage_arg())
                         .arg(signwith_arg())
                 )
@@ -936,13 +947,10 @@ fn run() -> Result<(), String> {
                 )
                 .subcommand(
                     Command::new("token")
-                        .about("Create and display the token used for private syncing.") 
+                        .about("Create and display the token used for private syncing. Generally, you only create a syncing token on one device and then use that token for multiple devices. For devices you trust, you use the full token when running `stamp sync run`. For devices on you don't trust (VPS for instance) you'll want to use a blind token, retreived using `stamp sync token -b`.") 
                         .arg(id_arg("The ID of the identity we want to set up syncing for. This overrides the configured default identity."))
-                        .arg(Arg::new("regen")
-                            .short('r')
-                            .long("regen")
-                            .num_args(0)
-                            .help("Use to regenerate your token. Helpful if the original is compromised or lost."))
+                        .arg(stage_arg())
+                        .arg(signwith_arg())
                         .arg(Arg::new("blind")
                             .action(ArgAction::SetTrue)
                             .short('b')
@@ -1203,8 +1211,28 @@ fn run() -> Result<(), String> {
                     let verbose = args.get_flag("verbose");
                     commands::claim::list(&id, private, verbose)?;
                 }
+                Some(("rename", args)) => {
+                    let id = id_val(args)?;
+                    let stage = args.get_flag("stage");
+                    let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
+                    let claim_id = args.get_one::<String>("CLAIM")
+                        .map(|x| x.as_str())
+                        .ok_or(format!("Must specify a claim ID"))?;
+                    let name = args.get_one::<String>("NAME")
+                        .map(|x| x.as_str())
+                        .map(|x| if x == "-" { None } else { Some(x) })
+                        .ok_or(format!("Must specify a name"))?;
+                    let transactions = commands::id::try_load_single_identity(&id)?;
+                    let identity = util::build_identity(&transactions)?;
+                    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&id)), identity.created())?;
+                    let trans = stamp_aux::claim::rename(&transactions, &claim_id, name)
+                        .map_err(|e| format!("Problem renaming claim: {}", e))?;
+                    save_trans!(transactions, master_key, trans, stage, sign_with);
+                }
                 Some(("delete", args)) => {
                     let id = id_val(args)?;
+                    let stage = args.get_flag("stage");
+                    let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
                     let claim_id = args.get_one::<String>("CLAIM")
                         .map(|x| x.as_str())
                         .ok_or(format!("Must specify a claim ID"))?;
@@ -1214,7 +1242,9 @@ fn run() -> Result<(), String> {
                         return Ok(());
                     }
                     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&id)), identity.created())?;
-                    let trans = aux_op!(stamp_aux::claim::delete(&transactions, &claim_id))?;
+                    let trans = stamp_aux::claim::delete(&transactions, &claim_id)
+                        .map_err(|e| format!("Problem deleting claim: {}", e))?;
+                    save_trans!(transactions, master_key, trans, stage, sign_with);
                 }
                 _ => unreachable!("Unknown command")
             }
@@ -1226,9 +1256,6 @@ fn run() -> Result<(), String> {
                     let claim_id = args.get_one::<String>("CLAIM")
                         .map(|x| x.as_str())
                         .ok_or(format!("Must specify a claim"))?;
-                    let output = args.get_one::<String>("output")
-                        .map(|x| x.as_str())
-                        .unwrap_or("-");
                     let stage = args.get_flag("stage");
                     let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
                     commands::stamp::new(&our_identity_id, claim_id, stage, sign_with)?;
@@ -1511,7 +1538,6 @@ fn run() -> Result<(), String> {
                 _ => unreachable!("Unknown command")
             }
         }
-        /*
         Some(("sync", args)) => {
             match args.subcommand() {
                 Some(("listen", args)) => {
@@ -1551,14 +1577,14 @@ fn run() -> Result<(), String> {
                 }
                 Some(("token", args)) => {
                     let id = id_val(args)?;
+                    let stage = args.get_flag("stage");
+                    let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
                     let blind = args.get_flag("blind");
-                    let regen = args.get_flag("regen");
-                    commands::sync::token(&id, blind, regen)?;
+                    commands::sync::token(&id, blind, stage, sign_with)?;
                 }
                 _ => unreachable!("Unknown command")
             }
         }
-        */
         _ => unreachable!("Unknown command")
     }
     Ok(())

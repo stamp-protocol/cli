@@ -166,7 +166,7 @@ pub fn update(id: &str, search: &str, name: Option<&str>, desc: Option<Option<&s
     transactions.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
 
-    let (transaction, key_id) = match (key_admin, key_subkey) {
+    let (transaction, _key_id) = match (key_admin, key_subkey) {
         (Some(admin), _) => {
             let trans = transactions.edit_admin_key(Timestamp::now(), admin.key_id(), name, desc)
                 .map_err(|e| format!("Error updating admin key: {:?}", e))?;
@@ -207,7 +207,7 @@ pub fn revoke(id: &str, search: &str, reason: &str, stage: bool, sign_with: Opti
         "invalid" => RevocationReason::Invalid,
         _ => RevocationReason::Unspecified,
     };
-    let (transaction, key_id) = match (key_admin, key_subkey) {
+    let (transaction, _key_id) = match (key_admin, key_subkey) {
         (Some(admin), _) => {
             let trans = transactions.revoke_admin_key(Timestamp::now(), admin.key_id(), rev_reason, None::<String>)
                 .map_err(|e| format!("Error revoking admin key: {:?}", e))?;

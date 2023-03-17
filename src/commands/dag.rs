@@ -11,16 +11,14 @@ use stamp_core::{
     crypto::base::KeyID,
     dag::{TransactionBody, Transaction, Transactions},
     identity::{
-        Identity,
         IdentityID,
-        Claim,
         ClaimSpec,
         keychain::Key,
     },
     private::MaybePrivate,
 };
 use std::convert::{TryFrom, From};
-use tracing::{error};
+use std::ops::Deref;
 
 pub fn list(id: &str) -> Result<(), String> {
     let transactions = id::try_load_single_identity(id)?;
@@ -43,7 +41,8 @@ pub fn reset(id: &str, txid: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn post_save(identity: &Identity, transaction: &Transaction, stage: bool) -> Option<String> {
+pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: bool) -> Result<Option<String>, String> {
+    let identity = util::build_identity(transactions)?;
     let view_staged = || format!("View the staged transaction with:\n  stamp stage view {}", transaction.id());
     let msg = match transaction.entry().body() {
         TransactionBody::AddAdminKeyV1 { admin_key } => {
@@ -75,10 +74,9 @@ pub fn post_save(identity: &Identity, transaction: &Transaction, stage: bool) ->
                     ClaimSpec::Domain(MaybePrivate::Public(domain)) => {
                         let claim_id: stamp_core::identity::ClaimID = transaction.id().clone().into();
                         let claim = identity.claims().iter().find(|c| c.id() == &claim_id)
-                            .or_else(|| { error!("Unable to find created claim"); None })?;
+                            .ok_or_else(|| format!("Unable to find created claim"))?;
                         let instant_values = claim.instant_verify_allowed_values(identity.id())
-                            .map_err(|e| error!("Problem grabbing allowed claim values: {}", e))
-                            .ok()?;
+                            .map_err(|e| format!("Problem grabbing allowed claim values: {}", e))?;
                         format!(
                             "{}\n  {}\n  {}\n",
                             util::text_wrap(&format!("Claim added. You can finalize this claim and make it verifiable instantly to others by adding a DNS TXT record to the domain {} that contains one of the following two values:\n", domain)),
@@ -89,10 +87,9 @@ pub fn post_save(identity: &Identity, transaction: &Transaction, stage: bool) ->
                     ClaimSpec::Url(MaybePrivate::Public(url)) => {
                         let claim_id: stamp_core::identity::ClaimID = transaction.id().clone().into();
                         let claim = identity.claims().iter().find(|c| c.id() == &claim_id)
-                            .or_else(|| { error!("Unable to find created claim"); None })?;
+                            .ok_or_else(|| format!("Unable to find created claim"))?;
                         let instant_values = claim.instant_verify_allowed_values(identity.id())
-                            .map_err(|e| error!("Problem grabbing allowed claim values: {}", e))
-                            .ok()?;
+                            .map_err(|e| format!("Problem grabbing allowed claim values: {}", e))?;
                         format!(
                             "{}\n  {}\n  {}\n",
                             util::text_wrap(&format!("Claim added. You can finalize this claim and make it verifiable instantly to others by updating the URL {} to contain one of the following two values:\n", url)),
@@ -109,14 +106,32 @@ pub fn post_save(identity: &Identity, transaction: &Transaction, stage: bool) ->
                 }
             }
         }
+        TransactionBody::EditClaimV1 { claim_id, name } => {
+            if stage {
+                format!("Claim rename staged. {}", view_staged())
+            } else {
+                if let Some(name) = name {
+                    format!("Claim {} renamed to {}.", claim_id.deref(), name)
+                } else {
+                    format!("Claim {} name removed.", claim_id.deref())
+                }
+            }
+        }
+        TransactionBody::DeleteClaimV1 { claim_id } => {
+            if stage {
+                format!("Claim staged for deletion. {}", view_staged())
+            } else {
+                format!("Claim {} deleted.", claim_id.deref())
+            }
+        }
         TransactionBody::MakeStampV1 { stamp } => {
             if stage {
                 format!("Stamp staged for creation. {}", view_staged())
             } else {
-                format!("Stamp on claim {} created.", id_str!(stamp.claim_id()).unwrap_or("<bad id>".into()))
+                format!("Stamp on claim {} created.", stamp.claim_id().deref())
             }
         }
-        TransactionBody::AddSubkeyV1 { key, .. } => {
+        TransactionBody::AddSubkeyV1 { key, name, .. } => {
             if stage {
                 format!("New key staged for creation. {}", view_staged())
             } else {
@@ -125,7 +140,11 @@ pub fn post_save(identity: &Identity, transaction: &Transaction, stage: bool) ->
                     Key::Crypto(..) => "crypto",
                     Key::Secret(..) => "secret",
                 };
-                format!("New {} key added: {}.", ty, key.key_id())
+                if ty == "secret" && name == "stamp/sync" {
+                    format!("Syncing key created. Run `stamp sync token` to view the token")
+                } else {
+                    format!("New {} key added: {}.", ty, key.key_id())
+                }
             }
         }
         TransactionBody::EditSubkeyV1 { id, .. } => {
@@ -142,19 +161,17 @@ pub fn post_save(identity: &Identity, transaction: &Transaction, stage: bool) ->
                 format!("Key {} deleted.", id)
             }
         }
-        _ => None?,
+        _ => { return Ok(None) }
     };
-    Some(msg)
+    Ok(Some(msg))
 }
 
 pub fn save_or_stage(transactions: Transactions, transaction: Transaction, stage: bool) -> Result<Transactions, String> {
-    let txid = transaction.id().clone();
     let identity_id = transactions.identity_id()
         .ok_or(format!("Unable to generate identity id"))?;
-    // had to, sorry...
     let trans_clone = transaction.clone();
     let transactions = if stage {
-        let transaction = stage_transaction(&identity_id, transaction)
+        stage_transaction(&identity_id, transaction)
             .map_err(|e| format!("Error staging transaction: {:?}", e))?;
         transactions
     } else {
@@ -162,8 +179,7 @@ pub fn save_or_stage(transactions: Transactions, transaction: Transaction, stage
             .map_err(|e| format!("Error saving transaction: {:?}", e))?;
         db::save_identity(transactions_mod)?
     };
-    let identity = util::build_identity(&transactions)?;
-    let msg = post_save(&identity, &trans_clone, stage);
+    let msg = post_save(&transactions, &trans_clone, stage)?;
     if let Some(msg) = msg {
         println!("{}", msg);
     }

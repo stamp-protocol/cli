@@ -6,7 +6,6 @@ use crate::{
     db,
     util,
 };
-use prettytable::Table;
 use stamp_aux::{
     db::{delete_staged_transaction, find_staged_transactions, load_staged_transaction, stage_transaction},
 };
@@ -41,7 +40,7 @@ pub fn view(txid: &str) -> Result<(), String> {
 pub fn delete(txid: &str) -> Result<(), String> {
     let transaction_id = TransactionID::try_from(txid)
         .map_err(|e| format!("Error loading transaction id: {:?}", e))?;
-    let (_, transaction) = load_staged_transaction(&transaction_id)
+    load_staged_transaction(&transaction_id)
         .map_err(|e| format!("Error loading staged transaction: {:?}", e))?
         .ok_or_else(|| format!("Transaction {} not found", txid))?;
     if !util::yesno_prompt("Do you really want to delete this staged transaction?) [y/N]", "N")? {
@@ -95,15 +94,14 @@ pub fn apply(txid: &str) -> Result<(), String> {
         .map_err(|e| format!("Problem saving staged transaction to identity: {:?}", e))?;
     let transactions_mod = db::save_identity(transactions_mod)?;
     println!("Transaction {} has been applied to the identity {}", transaction_id, IdentityID::short(&id_str));
-    let identity = util::build_identity(&transactions_mod)?;
     let trans = transactions_mod.transactions().iter().find(|t| t.id() == &transaction_id)
         .ok_or_else(|| format!("Unable to find saved transaction {}", transaction_id))?;
-    let post_save_msg = dag::post_save(&identity, trans, false);
+    let post_save_msg = dag::post_save(&transactions_mod, trans, false)?;
     if let Some(msg) = post_save_msg {
         println!("{}", msg);
     }
     delete_staged_transaction(&transaction_id)
-        .map_err(|e| format!("Problem removing staged transaction. The transaction was applied and can be safely removed with:\n  stamp stage delete {}", transaction_id))?;
+        .map_err(|_| format!("Problem removing staged transaction. The transaction was applied and can be safely removed with:\n  stamp stage delete {}", transaction_id))?;
     Ok(())
 }
 

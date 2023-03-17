@@ -4,7 +4,7 @@ use crate::{
     util,
 };
 use stamp_core::{
-    identity::{ClaimID, StampID, Confidence, StampEntry, IdentityID},
+    identity::{ClaimID, Confidence, StampEntry, IdentityID},
     util::Timestamp,
 };
 use std::convert::TryFrom;
