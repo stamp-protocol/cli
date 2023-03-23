@@ -145,7 +145,7 @@ pub fn list(id: &str, ty: Option<&str>, revoked: bool, search: Option<&str>) -> 
             }
         }
     }
-    print_keys_table(&keys, false);
+    print_keys_table(&keys, false, revoked);
     Ok(())
 }
 
@@ -350,36 +350,39 @@ pub fn keyfile(id: &str, shamir: &str, output: &str) -> Result<(), String> {
     util::write_file(output, shares.join("\n").as_bytes())
 }
 
-pub fn print_keys_table(keys: &Vec<PrintableKey>, choice: bool) {
+pub fn print_keys_table(keys: &Vec<PrintableKey>, choice: bool, show_revoked: bool) {
     let mut table = Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    let mut cols = Vec::with_capacity(7);
     if choice {
-        table.set_titles(row!["Choose", "Name", "ID", "Type", "Description", "Owned"]);
-    } else {
-        table.set_titles(row!["Name", "ID", "Type", "Description", "Owned"]);
+        cols.push("Choose");
     }
+    cols.push("Name");
+    cols.push("ID");
+    cols.push("Type");
+    cols.push("Description");
+    cols.push("Owned");
+    if show_revoked {
+        cols.push("Revoked");
+    }
+    table.set_titles(prettytable::Row::new(cols.into_iter().map(|x| prettytable::Cell::new(x)).collect::<Vec<_>>()));
     let mut idx = 0;
     for key in keys {
         let description = key.description.as_ref().map(|x| x.clone()).unwrap_or(String::from(""));
         let full = if key.has_private { "x" } else { "" };
+        let mut cols = Vec::with_capacity(7);
         if choice {
-            table.add_row(row![
-                format!("{}", idx + 1),
-                &key.name,
-                &key.key_id,
-                &key.ty,
-                description,
-                full,
-            ]);
-        } else {
-            table.add_row(row![
-                &key.name,
-                &key.key_id,
-                &key.ty,
-                description,
-                full,
-            ]);
+            cols.push(prettytable::Cell::new(format!("{}", idx + 1).as_str()));
         }
+        cols.push(prettytable::Cell::new(&key.name));
+        cols.push(prettytable::Cell::new(format!("{}", &key.key_id).as_str()));
+        cols.push(prettytable::Cell::new(&key.ty));
+        cols.push(prettytable::Cell::new(description.as_str()));
+        cols.push(prettytable::Cell::new(full));
+        if show_revoked {
+            cols.push(prettytable::Cell::new(if key.revocation.is_some() { "x" } else { "" }));
+        }
+        table.add_row(prettytable::Row::new(cols));
         idx += 1;
     }
     table.printstd();
@@ -396,7 +399,7 @@ pub fn find_keys_by_search_or_prompt<T, F>(identity: &Identity, key_search: Opti
     }
 
     fn choose_key_from(prompt: &str, keys: &Vec<&Subkey>) -> Option<Subkey> {
-        print_keys_table(&keys.iter().map(|x| x.clone().into()).collect::<Vec<_>>(), true);
+        print_keys_table(&keys.iter().map(|x| x.clone().into()).collect::<Vec<_>>(), true, false);
         let choice = util::value_prompt(prompt).ok()?;
         let choice_idx: usize = choice.parse().ok()?;
         if choice_idx > 0 && keys.get(choice_idx - 1).is_some() {
