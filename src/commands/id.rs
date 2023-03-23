@@ -53,9 +53,9 @@ pub(crate) fn try_load_single_identity(id: &str) -> Result<Transactions, String>
             .map(|x| util::build_identity(&x))
             .collect::<Result<Vec<_>, String>>()?;
         print_identities_table(&identities, false);
-        Err(format!("Multiple identities matched that ID"))?;
+        Err(format!("Multiple identities matched ID {}", id))?;
     } else if identities.len() == 0 {
-        Err(format!("No identities matches that ID"))?;
+        Err(format!("No identities match the ID {}", id))?;
     }
     Ok(identities[0].clone())
 }
