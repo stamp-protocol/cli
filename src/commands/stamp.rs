@@ -3,11 +3,16 @@ use crate::{
     db,
     util,
 };
+use prettytable::Table;
 use stamp_core::{
-    identity::{ClaimID, Confidence, StampEntry, IdentityID},
-    util::Timestamp,
+    crypto::message::{Message},
+    dag::{TransactionID},
+    identity::{ClaimID, Confidence, StampEntry, StampRequest, Stamp, IdentityID},
+    util::{Timestamp, SerdeBinary, SerText, base64_decode},
 };
 use std::convert::TryFrom;
+use std::ops::Deref;
+use std::str::FromStr;
 
 pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
     let our_transactions = id::try_load_single_identity(our_identity_id)?;
@@ -66,19 +71,109 @@ pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option
     let signed = util::sign_helper(&our_identity, transaction, &master_key, stage, sign_with)?;
     dag::save_or_stage(our_transactions, signed, stage)?;
     Ok(())
-    /*
-    let stamp = our_identity.stamp(&master_key, confidence, Timestamp::now(), their_identity.id(), claim.claim(), expires)
-        .map_err(|e| format!("Problem generating stamp: {:?}", e))?;
-    let serialized = stamp.serialize()
-        .map_err(|e| format!("Problem serializing stamp: {:?}", e))?;
-    Ok(serialized)
-    */
 }
 
-//pub fn request(our_identity_id: &str, claim_id: &str, our_crypto_subkey_search: &str, stamper_identity_id: &str, stamper_crypto_subkey_search: &str) -> Result<(), String> {
-    //let identity = id::try_load_single_identity(our_identity_id)?;
-    //let claim = 
-//}
+pub fn request(our_identity_id: &str, claim_search: &str, our_crypto_subkey_search: &str, stamper_identity_id: &str, stamper_crypto_subkey_search: &str) -> Result<Vec<u8>, String> {
+    let our_transactions = id::try_load_single_identity(our_identity_id)?;
+    let stamper_transactions = id::try_load_single_identity(stamper_identity_id)?;
+    let our_identity = util::build_identity(&our_transactions)?;
+    let our_id = id_str!(our_identity.id())?;
+    let stamper_identity = util::build_identity(&stamper_transactions)?;
+    let key_from = our_identity.keychain().subkeys().iter()
+        .find(|k| {
+            k.key_id().as_string().starts_with(our_crypto_subkey_search) ||
+                k.name() == our_crypto_subkey_search
+        })
+        .ok_or_else(|| format!("Cannot find `from` key {}", our_crypto_subkey_search))?;
+    let key_to = stamper_identity.keychain().subkeys().iter()
+        .find(|k| {
+            k.key_id().as_string().starts_with(stamper_crypto_subkey_search) ||
+                k.name() == stamper_crypto_subkey_search
+        })
+        .ok_or_else(|| format!("Cannot find `to` key {}", our_crypto_subkey_search))?;
+    let claim = our_identity.claims().iter()
+        .find(|x| {
+            let claim_id = String::try_from(x.id()).unwrap_or("".into());
+            claim_id.starts_with(claim_search) ||
+                x.name().as_ref().map(|x| x == claim_search).unwrap_or(false)
+        })
+        .ok_or_else(|| format!("Cannot find claim {}", claim_search))?;
+    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&our_id)), our_identity.created())?;
+    our_transactions.test_master_key(&master_key)
+        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+    let req_message = StampRequest::new(&master_key, our_identity.id(), &key_from, &key_to, claim)
+        .map_err(|e| format!("Problem creating stamp request: {:?}", e))?;
+    let bytes = req_message.serialize_binary()
+        .map_err(|e| format!("Problem serializing stamp request: {:?}", e))?;
+    Ok(bytes)
+}
+
+pub fn open_request(our_identity_id: &str, our_crypto_subkey_search: &str, req: &str) -> Result<(), String> {
+    let our_transactions = id::try_load_single_identity(our_identity_id)?;
+    let our_identity = util::build_identity(&our_transactions)?;
+    let our_id = id_str!(our_identity.id())?;
+    let key_to = our_identity.keychain().subkeys().iter()
+        .find(|k| {
+            k.key_id().as_string().starts_with(our_crypto_subkey_search) ||
+                k.name() == our_crypto_subkey_search
+        })
+        .ok_or_else(|| format!("Cannot find `to` key {}", our_crypto_subkey_search))?;
+    let sealed_bytes = util::read_file(req)?;
+    let sealed_message = Message::deserialize_binary(sealed_bytes.as_slice())
+        .or_else(|_| {
+            Message::deserialize_binary(&base64_decode(sealed_bytes.as_slice())?)
+        })
+        .map_err(|e| format!("Error reading sealed message: {}", e))?;
+    let signed_message = sealed_message.signed()
+        .ok_or_else(|| format!("Invalid stemp request message"))?;
+    let stampee_identity_id = signed_message.signed_by_identity();
+    let stampee_key_id = signed_message.signed_by_key();
+    let stampee_identity_id_str = id_str!(stampee_identity_id)?;
+    let stampee_transactions = id::try_load_single_identity(&stampee_identity_id_str)?;
+    let stampee_identity = util::build_identity(&stampee_transactions)?;
+    let key_from = stampee_identity.keychain().subkey_by_keyid(stampee_key_id)
+        .ok_or_else(|| format!("Cannot find `from` key {:?}", stampee_key_id))?;
+    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&our_id)), our_identity.created())?;
+    our_transactions.test_master_key(&master_key)
+        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+    let claim = StampRequest::open(&master_key, &key_to, &key_from, &sealed_message)
+        .map_err(|e| format!("Problem opening stamp request: {:?}", e))?;
+    let claim_str = claim.serialize_text()
+        .map_err(|e| format!("Problem serializing claim: {:?}", e))?;
+    println!("{}", claim_str);
+    Ok(())
+}
+
+pub fn list(id: &str, revoked: bool, verbose: bool) -> Result<(), String> {
+    let transactions = id::try_load_single_identity(id)?;
+    let identity = util::build_identity(&transactions)?;
+    let ts_fake = Timestamp::from_str("0000-01-01T00:00:00.000Z")
+        .map_err(|e| format!("Error creating fake timestamp: {:?}", e))?;
+    let stamps = identity.stamps().stamps().iter()
+        .map(|stamp| {
+            let revocation = identity.stamps().revocations().iter()
+                .find(|r| r.entry().stamp_id() == stamp.id());
+            (stamp, revocation)
+        })
+        .filter(|(_, revocation)| {
+            if revoked {
+                true
+            } else {
+                revocation.is_none()
+            }
+        })
+        .map(|(stamp, revocation)| {
+            let stamp_id: TransactionID = stamp.id().deref().clone();
+            let ts = transactions.iter()
+                .find(|t| t.id() == &stamp_id)
+                .map(|t| t.entry().created().clone())
+                .unwrap_or_else(|| ts_fake.clone());
+            (stamp.clone(), ts, revocation.is_some())
+        })
+        .collect::<Vec<_>>();
+    print_stamps_table(&stamps, verbose, revoked)?;
+    Ok(())
+}
 
 /*
 pub fn accept(our_identity_id: &str, location: &str) -> Result<(), String> {
@@ -100,3 +195,52 @@ pub fn accept(our_identity_id: &str, location: &str) -> Result<(), String> {
 }
 */
 
+pub fn print_stamps_table(stamps: &Vec<(Stamp, Timestamp, bool)>, verbose: bool, show_revoked: bool) -> Result<(), String> {
+    let mut table = Table::new();
+    table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    let id_field = if verbose { "ID" } else { "ID (short)" };
+    table.set_titles(row![id_field, "Name", "Type", "Value", "Created", "# stamps"]);
+
+    let mut cols = Vec::with_capacity(7);
+    cols.push(id_field);
+    cols.push("Stampee");
+    cols.push("Claim");
+    cols.push("Confidence");
+    cols.push("Created");
+    cols.push("Expires");
+    if show_revoked {
+        cols.push("Revoked");
+    }
+    table.set_titles(prettytable::Row::new(cols.into_iter().map(|x| prettytable::Cell::new(x)).collect::<Vec<_>>()));
+
+    for (stamp, created_ts, revoked) in stamps {
+        let (id_full, id_short) = id_str_split!(stamp.id());
+        let (claim_id_full, claim_id_short) = id_str_split!(stamp.entry().claim_id());
+        let (stampee_full, stampee_short) = id_str_split!(stamp.entry().stampee());
+        let expires = stamp.entry().expires().as_ref()
+            .map(|x| x.local().format("%b %d, %Y").to_string())
+            .unwrap_or_else(|| String::from("-"));
+        let created = created_ts.local().format("%b %d, %Y").to_string();
+        let confidence = match stamp.entry().confidence() {
+            Confidence::None => "none",
+            Confidence::Low => "low",
+            Confidence::Medium => "medium",
+            Confidence::High => "high",
+            Confidence::Extreme => "extreme",
+        };
+        let mut cols = Vec::with_capacity(7);
+        cols.push(prettytable::Cell::new(if verbose { &id_full } else { &id_short }));
+        cols.push(prettytable::Cell::new(if verbose { &stampee_full } else { &stampee_short }));
+        cols.push(prettytable::Cell::new(if verbose { &claim_id_full } else { &claim_id_short }));
+        cols.push(prettytable::Cell::new(confidence));
+        cols.push(prettytable::Cell::new(&created));
+        cols.push(prettytable::Cell::new(&expires));
+        if show_revoked {
+            cols.push(prettytable::Cell::new(if *revoked { "x" } else { "" }));
+        }
+        table.add_row(prettytable::Row::new(cols));
+
+    }
+    table.printstd();
+    Ok(())
+}
