@@ -436,18 +436,25 @@ fn run() -> Result<(), String> {
                         .arg(Arg::new("CLAIM")
                             .index(1)
                             .required(true)
-                            .help("The ID (prefix or full) of the claim we wish to stamp."))
+                            .help("The ID or name of the claim we wish to stamp."))
                         .arg(stage_arg())
                         .arg(signwith_arg())
                 )
                 .subcommand(
                     Command::new("req")
+                        .alias("request")
+                        .alias("csr")
                         .about("Create a stamp request. This is is generally needed when you want to have another identity stamp a private claim, in which case the claim is decrypted with your master key, then encrypted via the recipient's public key so only they can open it. You can also send stamp requests for public claims as well.")
                         .arg(Arg::new("key-from")
                             .short('f')
                             .long("key-from")
                             .num_args(1)
                             .help("The ID or name of the `crypto` key in your keychain you want to sign the message with. If you don't specify this, you will be prompted."))
+                        .arg(Arg::new("stamper-identity-id")
+                            .short('s')
+                            .long("stamper")
+                            .num_args(1)
+                            .help("The ID of the identity we wish to request a stamp from."))
                         .arg(Arg::new("key-to")
                             .short('t')
                             .long("key-to")
@@ -466,12 +473,33 @@ fn run() -> Result<(), String> {
                         .arg(id_arg("The ID of the identity we are creating the stamp request for. This overrides the configured default identity."))
                         .arg(Arg::new("CLAIM")
                             .index(1)
-                            .required(true)
-                            .help("The ID of the claim we want to request a stamp on."))
+                            .num_args(1)
+                            .help("The ID or name of the claim we want to request a stamp on."))
+                )
+                .subcommand(
+                    Command::new("open-req")
+                        .alias("open")
+                        .about("Open a stamp request and display the claim inside of it. This allows the claim to be verified by you (the stamper) via `stamp stamp new <claim id>`. Note that the identity that created the stamp request must be stored locally.")
+                        .arg(id_arg("The ID of the identity we are stamping from. This overrides the configured default identity."))
+                        .arg(Arg::new("key-to")
+                            .short('t')
+                            .long("key-to")
+                            .num_args(1)
+                            .help("The ID or name of the `crypto` key in the recipient's keychain that the message will be encrypted with. If you don't specify this, you will be prompted. The recipient's identity must be stored locally."))
+                        .arg(Arg::new("ENCRYPTED")
+                            .index(1)
+                            .required(false)
+                            .help("The input file to read the encrypted stamp request from. You can leave blank or use the value '-' to signify STDIN."))
                 )
                 .subcommand(
                     Command::new("list")
                         .about("List all public stamps we have made. To view stamps others have made, see the `stamp claim stamps` command.")
+                        .arg(id_arg("The ID of the identity we are stamping from. This overrides the configured default identity."))
+                        .arg(Arg::new("revoked")
+                            .short('r')
+                            .long("revoked")
+                            .action(ArgAction::SetTrue)
+                            .help("List revoked stamps."))
                         .arg(Arg::new("verbose")
                             .action(ArgAction::SetTrue)
                             .short('v')
@@ -1260,23 +1288,51 @@ fn run() -> Result<(), String> {
                     let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
                     commands::stamp::new(&our_identity_id, claim_id, stage, sign_with)?;
                 }
-                /*
                 Some(("req", args)) => {
-                    drop(args);
-                    unimplemented!();
+                    let id = id_val(args)?;
+                    let key_from = args.get_one::<String>("key-from")
+                        .map(|x| x.as_str())
+                        .ok_or(format!("Must specify the from key"))?;
+                    let stamper_id = args.get_one::<String>("stamper-identity-id")
+                        .map(|x| x.as_str())
+                        .ok_or(format!("Must specify the stamper's identity id"))?;
+                    let key_to = args.get_one::<String>("key-to")
+                        .map(|x| x.as_str())
+                        .ok_or(format!("Must specify the to key"))?;
+                    let output = args.get_one::<String>("output")
+                        .map(|x| x.as_str())
+                        .unwrap_or("-");
+                    let base64 = args.get_flag("base64");
+                    let claim = args.get_one::<String>("CLAIM")
+                        .map(|x| x.as_str())
+                        .ok_or(format!("Must specify a claim"))?;
+                    let req = commands::stamp::request(&id, claim, key_from, stamper_id, key_to)?;
+                    if base64 {
+                        util::write_file(output, stamp_core::util::base64_encode(req.as_slice()).as_bytes())?;
+                    } else {
+                        util::write_file(output, req.as_slice())?;
+                    }
+                }
+                Some(("open-req", args)) => {
+                    let id = id_val(args)?;
+                    let key_to = args.get_one::<String>("key-to")
+                        .map(|x| x.as_str())
+                        .ok_or(format!("Must specify the to key"))?;
+                    let req = args.get_one::<String>("ENCRYPTED")
+                        .map(|x| x.as_str())
+                        .unwrap_or("-");
+                    commands::stamp::open_request(&id, &key_to, req)?;
                 }
                 Some(("list", args)) => {
+                    let id = id_val(args)?;
+                    let revoked = args.get_flag("revoked");
+                    let verbose = args.get_flag("verbose");
+                    commands::stamp::list(&id, revoked, verbose)?;
+                }
+                Some(("accept", args)) => {
                     drop(args);
                     unimplemented!();
                 }
-                Some(("accept", args)) => {
-                    let identity_id = id_val(args)?;
-                    let location = args.get_one::<String>("LOCATION")
-                        .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a stamp location"))?;
-                    commands::stamp::accept(&identity_id, location)?;
-                }
-                */
                 Some(("revoke", args)) => {
                     drop(args);
                     unimplemented!();
