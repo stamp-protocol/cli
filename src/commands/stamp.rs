@@ -7,7 +7,10 @@ use prettytable::Table;
 use stamp_core::{
     crypto::message::{Message},
     dag::{TransactionID},
-    identity::{ClaimID, Confidence, StampEntry, StampRequest, Stamp, IdentityID},
+    identity::{
+        ClaimID, Confidence, StampEntry, StampRequest, Stamp, IdentityID,
+        stamp::RevocationReason,
+    },
     util::{Timestamp, SerdeBinary, SerText, base64_decode},
 };
 use std::convert::TryFrom;
@@ -149,26 +152,21 @@ pub fn list(id: &str, revoked: bool, verbose: bool) -> Result<(), String> {
     let identity = util::build_identity(&transactions)?;
     let ts_fake = Timestamp::from_str("0000-01-01T00:00:00.000Z")
         .map_err(|e| format!("Error creating fake timestamp: {:?}", e))?;
-    let stamps = identity.stamps().stamps().iter()
-        .map(|stamp| {
-            let revocation = identity.stamps().revocations().iter()
-                .find(|r| r.entry().stamp_id() == stamp.id());
-            (stamp, revocation)
-        })
-        .filter(|(_, revocation)| {
+    let stamps = identity.stamps().iter()
+        .filter(|x| {
             if revoked {
                 true
             } else {
-                revocation.is_none()
+                x.revocation().is_none()
             }
         })
-        .map(|(stamp, revocation)| {
+        .map(|stamp| {
             let stamp_id: TransactionID = stamp.id().deref().clone();
             let ts = transactions.iter()
                 .find(|t| t.id() == &stamp_id)
                 .map(|t| t.entry().created().clone())
                 .unwrap_or_else(|| ts_fake.clone());
-            (stamp.clone(), ts, revocation.is_some())
+            (stamp.clone(), ts)
         })
         .collect::<Vec<_>>();
     print_stamps_table(&stamps, verbose, revoked)?;
@@ -195,7 +193,36 @@ pub fn accept(our_identity_id: &str, location: &str) -> Result<(), String> {
 }
 */
 
-pub fn print_stamps_table(stamps: &Vec<(Stamp, Timestamp, bool)>, verbose: bool, show_revoked: bool) -> Result<(), String> {
+pub fn revoke(id: &str, stamp_search: &str, reason: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let transactions = id::try_load_single_identity(id)?;
+    let identity = util::build_identity(&transactions)?;
+    let id_str = id_str!(identity.id())?;
+    let stamp = identity.stamps().iter()
+        .find(|x| {
+            let id_str = String::try_from(x.id()).unwrap_or_else(|_| "<bad id>".into());
+            id_str.starts_with(stamp_search)
+        })
+        .ok_or_else(|| format!("Couldn't find stamp {}", stamp_search))?;
+    if stamp.revocation().is_some() {
+        Err(format!("The stamp {} is already revoked", stamp.id()))?;
+    }
+    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
+    transactions.test_master_key(&master_key)
+        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+    let rev_reason = match reason {
+        "superseded" => RevocationReason::Superseded,
+        "compromised" => RevocationReason::Compromised,
+        "invalid" => RevocationReason::Invalid,
+        _ => RevocationReason::Unspecified,
+    };
+    let trans = transactions.revoke_stamp(Timestamp::now(), stamp.id().clone(), rev_reason)
+        .map_err(|e| format!("Problem creating revocation transaction: {:?}", e))?;
+    let signed = util::sign_helper(&identity, trans, &master_key, stage, sign_with)?;
+    dag::save_or_stage(transactions, signed, stage)?;
+    Ok(())
+}
+
+pub fn print_stamps_table(stamps: &Vec<(Stamp, Timestamp)>, verbose: bool, show_revoked: bool) -> Result<(), String> {
     let mut table = Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
     let id_field = if verbose { "ID" } else { "ID (short)" };
@@ -213,7 +240,8 @@ pub fn print_stamps_table(stamps: &Vec<(Stamp, Timestamp, bool)>, verbose: bool,
     }
     table.set_titles(prettytable::Row::new(cols.into_iter().map(|x| prettytable::Cell::new(x)).collect::<Vec<_>>()));
 
-    for (stamp, created_ts, revoked) in stamps {
+    for (stamp, created_ts) in stamps {
+        let revoked = stamp.revocation().is_some();
         let (id_full, id_short) = id_str_split!(stamp.id());
         let (claim_id_full, claim_id_short) = id_str_split!(stamp.entry().claim_id());
         let (stampee_full, stampee_short) = id_str_split!(stamp.entry().stampee());
@@ -236,7 +264,7 @@ pub fn print_stamps_table(stamps: &Vec<(Stamp, Timestamp, bool)>, verbose: bool,
         cols.push(prettytable::Cell::new(&created));
         cols.push(prettytable::Cell::new(&expires));
         if show_revoked {
-            cols.push(prettytable::Cell::new(if *revoked { "x" } else { "" }));
+            cols.push(prettytable::Cell::new(if revoked { "x" } else { "" }));
         }
         table.add_row(prettytable::Row::new(cols));
 

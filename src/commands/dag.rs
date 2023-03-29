@@ -131,6 +131,13 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
                 format!("Stamp on claim {} created.", stamp.claim_id().deref())
             }
         }
+        TransactionBody::RevokeStampV1 { stamp_id, .. } => {
+            if stage {
+                format!("Stamp revocation staged. {}", view_staged())
+            } else {
+                format!("Stamp {} has been revoked.", stamp_id)
+            }
+        }
         TransactionBody::AddSubkeyV1 { key, name, .. } => {
             if stage {
                 format!("New key staged for creation. {}", view_staged())
