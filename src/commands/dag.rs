@@ -16,6 +16,7 @@ use stamp_core::{
         keychain::Key,
     },
     private::MaybePrivate,
+    util::{SerdeBinary, base64_encode},
 };
 use std::convert::{TryFrom, From};
 use std::ops::Deref;
@@ -38,6 +39,24 @@ pub fn reset(id: &str, txid: &str) -> Result<(), String> {
     let removed = transactions.transactions().len() - transactions_reset.transactions().len();
     println!("Removed {} transactions from identity {}", removed, IdentityID::short(&id_str));
     db::save_identity(transactions_reset)?;
+    Ok(())
+}
+
+pub fn export(id: &str, txid: &str, output: &str, base64: bool) -> Result<(), String> {
+    let transactions = id::try_load_single_identity(id)?;
+    let identity = util::build_identity(&transactions)?;
+    let id_str = id_str!(identity.id())?;
+    let trans = transactions.transactions().iter()
+        .find(|x| id_str!(x.id()).map(|id| id.starts_with(txid)).unwrap_or(false))
+        .ok_or(format!("Transaction {} not found for identity {}", txid, IdentityID::short(&id_str)))?;
+    let serialized = trans.serialize_binary()
+        .map_err(|e| format!("Problem serializing transaction: {:?}", e))?;
+    if base64 {
+        let serialized_str = base64_encode(serialized.as_slice());
+        util::write_file(output, serialized_str.as_bytes())?;
+    } else {
+        util::write_file(output, serialized.as_slice())?;
+    }
     Ok(())
 }
 
@@ -136,6 +155,13 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
                 format!("Stamp revocation staged. {}", view_staged())
             } else {
                 format!("Stamp {} has been revoked.", stamp_id)
+            }
+        }
+        TransactionBody::AcceptStampV1 { stamp_transaction } => {
+            if stage {
+                format!("Stamp acceptance staged. {}", view_staged())
+            } else {
+                format!("Stamp {} has been accepted.", stamp_transaction.id())
             }
         }
         TransactionBody::AddSubkeyV1 { key, name, .. } => {

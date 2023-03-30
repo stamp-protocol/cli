@@ -136,6 +136,8 @@ pub fn read_file(filename: &str) -> Result<Vec<u8>, String> {
                 .map_err(|e| format!("Problem reading file: {}: {:?}", filename, e))?;
             Ok(contents)
         }
+    } else if filename.starts_with("stamp://") {
+        Err(format!("Reading from a stamp:// URL is not currently implemented"))
     } else {
         load_file(filename)
     }

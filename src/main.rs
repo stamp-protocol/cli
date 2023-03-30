@@ -403,6 +403,21 @@ fn run() -> Result<(), String> {
                             .help("The name we're setting for the claim."))
                 )
                 .subcommand(
+                    Command::new("stamps")
+                        .about("List the stamps on a claim")
+                        .alias("list-stamps")
+                        .arg(id_arg("The ID of the identity we are listing stamps for. This overrides the configured default identity."))
+                        .arg(Arg::new("CLAIM")
+                            .required(true)
+                            .index(1)
+                            .help("The ID or name of the claim we're listing stamps for."))
+                        .arg(Arg::new("verbose")
+                            .action(ArgAction::SetTrue)
+                            .short('v')
+                            .long("verbose")
+                            .help("Verbose output, with long-form IDs."))
+                )
+                .subcommand(
                     Command::new("delete")
                         .about("Remove a claim from your identity.")
                         .arg(id_arg("The ID of the identity we are removing the claim from. This overrides the configured default identity."))
@@ -493,13 +508,31 @@ fn run() -> Result<(), String> {
                             .help("Verbose output, with long-form IDs."))
                 )
                 .subcommand(
+                    Command::new("export")
+                        .about("Export a stamp in binary or text form that can be accepted by the identity in ownership of the stamped claim. Since a stamp is really just another transaction, this is a wrapper around `stamp dag export`.")
+                        .arg(id_arg("The ID of the identity we are exporting the stamp for. This overrides the configured default identity."))
+                        .arg(Arg::new("STAMP")
+                            .required(true)
+                            .index(1)
+                            .help("The ID of the stamp we're exporting."))
+                        .arg(Arg::new("output")
+                            .short('o')
+                            .long("output")
+                            .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
+                        .arg(Arg::new("base64")
+                            .action(ArgAction::SetTrue)
+                            .short('b')
+                            .long("base64")
+                            .help("If set, output the stamp transaction as base64 (which is easier to put in email or a website),"))
+                )
+                .subcommand(
                     Command::new("accept")
                         .about("Accept a stamp someone else has made on one of our claims.")
                         .arg(id_arg("The ID of the identity we are accepting the stamp for. This overrides the configured default identity."))
                         .arg(Arg::new("LOCATION")
                             .required(true)
                             .index(1)
-                            .help("The stamp we're accepting, generally a file."))
+                            .help("The stamp we're accepting. This can be the path of a file holding the stamp transaction, or it can be a stamp URL (eg stamp://zef7Qo5S34k0yZMB/stamps/WUX2PKz20cwK7pgC). Set to - to read from STDIN."))
                         .arg(stage_arg())
                         .arg(signwith_arg())
                 )
@@ -1212,6 +1245,14 @@ fn run() -> Result<(), String> {
                         .map_err(|e| format!("Problem renaming claim: {}", e))?;
                     save_trans!(transactions, master_key, trans, stage, sign_with);
                 }
+                Some(("stamps", args)) => {
+                    let id = id_val(args)?;
+                    let claim = args.get_one::<String>("CLAIM")
+                        .map(|x| x.as_str())
+                        .ok_or(format!("Must specify a CLAIM"))?;
+                    let verbose = args.get_flag("verbose");
+                    commands::claim::stamp_list(&id, claim, verbose)?;
+                }
                 Some(("delete", args)) => {
                     let id = id_val(args)?;
                     let stage = args.get_flag("stage");
@@ -1284,9 +1325,25 @@ fn run() -> Result<(), String> {
                     let verbose = args.get_flag("verbose");
                     commands::stamp::list(&id, revoked, verbose)?;
                 }
+                Some(("export", args)) => {
+                    let id = id_val(args)?;
+                    let stamp = args.get_one::<String>("STAMP")
+                        .map(|x| x.as_str())
+                        .ok_or(format!("Must specify a STAMP id"))?;
+                    let output = args.get_one::<String>("output")
+                        .map(|x| x.as_str())
+                        .unwrap_or("-");
+                    let base64 = args.get_flag("base64");
+                    commands::dag::export(&id, stamp, output, base64)?;
+                }
                 Some(("accept", args)) => {
-                    drop(args);
-                    unimplemented!();
+                    let id = id_val(args)?;
+                    let location = args.get_one::<String>("LOCATION")
+                        .map(|x| x.as_str())
+                        .ok_or_else(|| format!("Must specify a LOCATION value"))?;
+                    let stage = args.get_flag("stage");
+                    let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
+                    commands::stamp::accept(&id, location, stage, sign_with)?;
                 }
                 Some(("revoke", args)) => {
                     let id = id_val(args)?;

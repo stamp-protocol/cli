@@ -1,6 +1,6 @@
 use stamp_aux;
 use crate::{
-    commands::id,
+    commands::{id, stamp},
     db,
     util,
 };
@@ -175,6 +175,22 @@ pub fn list(id: &str, private: bool, verbose: bool) -> Result<(), String> {
         })
         .collect::<Vec<_>>();
     print_claims_table(&claim_list, master_key_maybe, verbose);
+    Ok(())
+}
+
+pub fn stamp_list(id: &str, claim_id_or_name: &str, verbose: bool) -> Result<(), String> {
+    let transactions = id::try_load_single_identity(id)?;
+    let identity = util::build_identity(&transactions)?;
+    let id_str = id_str!(identity.id())?;
+    let claim = identity.claims().iter()
+        .find(|x| {
+            x.name().as_ref().map(|y| y == claim_id_or_name).unwrap_or(false) ||
+                id_str!(x.id()).unwrap_or("<bad dates>".into()).starts_with(claim_id_or_name)
+        })
+        .ok_or_else(|| format!("Could not find claim {} in identity {}.", claim_id_or_name, id_str))?;
+    let stamps = claim.stamps().iter()
+        .collect::<Vec<_>>();
+    stamp::print_stamps_table(&stamps, verbose, false)?;
     Ok(())
 }
 

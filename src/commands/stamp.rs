@@ -6,7 +6,7 @@ use crate::{
 use prettytable::Table;
 use stamp_core::{
     crypto::message::{Message},
-    dag::{TransactionID},
+    dag::{Transaction},
     identity::{
         ClaimID, Confidence, StampEntry, StampRequest, Stamp, IdentityID,
         stamp::RevocationReason,
@@ -14,8 +14,6 @@ use stamp_core::{
     util::{Timestamp, SerdeBinary, SerText, base64_decode},
 };
 use std::convert::TryFrom;
-use std::ops::Deref;
-use std::str::FromStr;
 
 pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
     let our_transactions = id::try_load_single_identity(our_identity_id)?;
@@ -150,8 +148,6 @@ pub fn open_request(our_identity_id: &str, our_crypto_subkey_search: &str, req: 
 pub fn list(id: &str, revoked: bool, verbose: bool) -> Result<(), String> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
-    let ts_fake = Timestamp::from_str("0000-01-01T00:00:00.000Z")
-        .map_err(|e| format!("Error creating fake timestamp: {:?}", e))?;
     let stamps = identity.stamps().iter()
         .filter(|x| {
             if revoked {
@@ -160,38 +156,35 @@ pub fn list(id: &str, revoked: bool, verbose: bool) -> Result<(), String> {
                 x.revocation().is_none()
             }
         })
-        .map(|stamp| {
-            let stamp_id: TransactionID = stamp.id().deref().clone();
-            let ts = transactions.iter()
-                .find(|t| t.id() == &stamp_id)
-                .map(|t| t.entry().created().clone())
-                .unwrap_or_else(|| ts_fake.clone());
-            (stamp.clone(), ts)
-        })
         .collect::<Vec<_>>();
     print_stamps_table(&stamps, verbose, revoked)?;
     Ok(())
 }
 
-/*
-pub fn accept(our_identity_id: &str, location: &str) -> Result<(), String> {
-    let our_transactions = id::try_load_single_identity(our_identity_id)?;
-    let our_identity = util::build_identity(&our_transactions)?;
-    let stamp_contents = util::load_file(location)?;
-    let stamp = Stamp::deserialize(stamp_contents.as_slice())
-        .map_err(|e| format!("Problem deserializing stamp: {:?}", e))?;
-    let stamp_id_str = id_str!(stamp.id())?;
-    let our_id = id_str!(our_identity.id())?;
-    let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&our_id)), our_identity.created())?;
-    our_identity.test_master_key(&master_key)
-        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
-    let our_transactions_mod = our_transactions.accept_stamp(&master_key, Timestamp::now(), stamp)
-        .map_err(|e| format!("Error accepting stamp: {:?}", e))?;
-    db::save_identity(our_transactions_mod)?;
-    println!("Stamp {} accepted!", StampID::short(&stamp_id_str));
+pub fn accept(id: &str, location: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let transactions = id::try_load_single_identity(id)?;
+    let identity = util::build_identity(&transactions)?;
+    let id_str = id_str!(identity.id())?;
+    let stamp_bytes = util::read_file(location)?;
+    let stamp = Transaction::deserialize_binary(stamp_bytes.as_slice())
+        .or_else(|_| {
+            Transaction::deserialize_binary(&base64_decode(stamp_bytes.as_slice())?)
+        })
+        .map_err(|e| format!("Error deserializing stamp transaction: {:?}", e))?;
+    let stamp_text = stamp.serialize_text()
+        .map_err(|e| format!("Problem serializing stamp transaction: {:?}", e))?;
+    println!("{}", stamp_text);
+    println!("----------");
+    if !util::yesno_prompt("Do you wish to accept the above stamp? [Y/n]", "Y")? {
+        println!("Aborted.");
+    }
+    let trans = transactions.accept_stamp(Timestamp::now(), stamp)
+        .map_err(|e| format!("Problem creating acceptance transaction: {:?}", e))?;
+    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
+    let signed = util::sign_helper(&identity, trans, &master_key, stage, sign_with)?;
+    dag::save_or_stage(transactions, signed, stage)?;
     Ok(())
 }
-*/
 
 pub fn revoke(id: &str, stamp_search: &str, reason: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
     let transactions = id::try_load_single_identity(id)?;
@@ -222,7 +215,7 @@ pub fn revoke(id: &str, stamp_search: &str, reason: &str, stage: bool, sign_with
     Ok(())
 }
 
-pub fn print_stamps_table(stamps: &Vec<(Stamp, Timestamp)>, verbose: bool, show_revoked: bool) -> Result<(), String> {
+pub fn print_stamps_table(stamps: &Vec<&Stamp>, verbose: bool, show_revoked: bool) -> Result<(), String> {
     let mut table = Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
     let id_field = if verbose { "ID" } else { "ID (short)" };
@@ -240,7 +233,7 @@ pub fn print_stamps_table(stamps: &Vec<(Stamp, Timestamp)>, verbose: bool, show_
     }
     table.set_titles(prettytable::Row::new(cols.into_iter().map(|x| prettytable::Cell::new(x)).collect::<Vec<_>>()));
 
-    for (stamp, created_ts) in stamps {
+    for stamp in stamps {
         let revoked = stamp.revocation().is_some();
         let (id_full, id_short) = id_str_split!(stamp.id());
         let (claim_id_full, claim_id_short) = id_str_split!(stamp.entry().claim_id());
@@ -248,7 +241,7 @@ pub fn print_stamps_table(stamps: &Vec<(Stamp, Timestamp)>, verbose: bool, show_
         let expires = stamp.entry().expires().as_ref()
             .map(|x| x.local().format("%b %d, %Y").to_string())
             .unwrap_or_else(|| String::from("-"));
-        let created = created_ts.local().format("%b %d, %Y").to_string();
+        let created = stamp.created().local().format("%b %d, %Y").to_string();
         let confidence = match stamp.entry().confidence() {
             Confidence::None => "none",
             Confidence::Low => "low",
