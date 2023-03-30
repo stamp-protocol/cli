@@ -509,7 +509,7 @@ fn run() -> Result<(), String> {
                 )
                 .subcommand(
                     Command::new("export")
-                        .about("Export a stamp in binary or text form that can be accepted by the identity in ownership of the stamped claim. Since a stamp is really just another transaction, this is a wrapper around `stamp dag export`.")
+                        .about("Export a stamp in binary or text form that can be accepted by the identity in ownership of the stamped claim.")
                         .arg(id_arg("The ID of the identity we are exporting the stamp for. This overrides the configured default identity."))
                         .arg(Arg::new("STAMP")
                             .required(true)
