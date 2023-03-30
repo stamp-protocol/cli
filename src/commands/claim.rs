@@ -12,8 +12,10 @@ use stamp_core::{
         Claim,
         ClaimID,
         ClaimSpec,
+        Identity,
         IdentityID,
         RelationshipType,
+        Stamp,
     },
     private::MaybePrivate,
     rasn::{Encode, Decode},
@@ -194,15 +196,31 @@ pub fn stamp_list(id: &str, claim_id_or_name: &str, verbose: bool) -> Result<(),
     Ok(())
 }
 
-pub fn stamp_delete(id: &str, stamp_id: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
-    let transactions = id::try_load_single_identity(id)?;
-    let identity = util::build_identity(&transactions)?;
-    let id_str = id_str!(identity.id())?;
-    let stamp = identity.claims().iter()
+fn find_stamp_by_id<'a>(identity: &'a Identity, stamp_id: &str) -> Option<&'a Stamp> {
+    identity.claims().iter()
         .find_map(|c| {
             c.stamps().iter()
                 .find(|s| id_str!(s.id()).unwrap_or("".into()).starts_with(stamp_id))
         })
+}
+
+pub fn stamp_view(id: &str, stamp_id: &str) -> Result<(), String> {
+    let transactions = id::try_load_single_identity(id)?;
+    let identity = util::build_identity(&transactions)?;
+    let id_str = id_str!(identity.id())?;
+    let stamp = find_stamp_by_id(&identity, stamp_id)
+        .ok_or_else(|| format!("Could not find stamp {} in identity {}.", stamp_id, id_str))?;
+    let stamp_text = stamp.serialize_text()
+        .map_err(|e| format!("Problem serializing stamp transaction: {:?}", e))?;
+    println!("{}", stamp_text);
+    Ok(())
+}
+
+pub fn stamp_delete(id: &str, stamp_id: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let transactions = id::try_load_single_identity(id)?;
+    let identity = util::build_identity(&transactions)?;
+    let id_str = id_str!(identity.id())?;
+    let stamp = find_stamp_by_id(&identity, stamp_id)
         .ok_or_else(|| format!("Could not find stamp {} in identity {}.", stamp_id, id_str))?;
     let stamp_text = stamp.serialize_text()
         .map_err(|e| format!("Problem serializing stamp transaction: {:?}", e))?;

@@ -423,6 +423,15 @@ fn run() -> Result<(), String> {
                                     .help("Verbose output, with long-form IDs."))
                         )
                         .subcommand(
+                            Command::new("view")
+                                .about("View a stamp as plain text.")
+                                .arg(id_arg("The ID of the identity we are viewing the stamp for. This overrides the configured default identity."))
+                                .arg(Arg::new("STAMP")
+                                    .required(true)
+                                    .index(1)
+                                    .help("The ID of the stamp we're viewing."))
+                        )
+                        .subcommand(
                             Command::new("delete")
                                 .about("Delete a stamp from a claim")
                                 .alias("rm")
@@ -1272,6 +1281,13 @@ fn run() -> Result<(), String> {
                                 .ok_or(format!("Must specify a CLAIM"))?;
                             let verbose = args.get_flag("verbose");
                             commands::claim::stamp_list(&id, claim, verbose)?;
+                        }
+                        Some(("view", args)) => {
+                            let id = id_val(args)?;
+                            let stamp_id = args.get_one::<String>("STAMP")
+                                .map(|x| x.as_str())
+                                .ok_or(format!("Must specify a STAMP id"))?;
+                            commands::claim::stamp_view(&id, stamp_id)?;
                         }
                         Some(("delete", args)) => {
                             let id = id_val(args)?;
