@@ -177,6 +177,7 @@ pub fn accept(id: &str, location: &str, stage: bool, sign_with: Option<&str>) ->
     println!("----------");
     if !util::yesno_prompt("Do you wish to accept the above stamp? [Y/n]", "Y")? {
         println!("Aborted.");
+        return Ok(());
     }
     let trans = transactions.accept_stamp(Timestamp::now(), stamp)
         .map_err(|e| format!("Problem creating acceptance transaction: {:?}", e))?;

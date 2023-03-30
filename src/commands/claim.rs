@@ -1,6 +1,6 @@
 use stamp_aux;
 use crate::{
-    commands::{id, stamp},
+    commands::{dag, id, stamp},
     db,
     util,
 };
@@ -17,7 +17,7 @@ use stamp_core::{
     },
     private::MaybePrivate,
     rasn::{Encode, Decode},
-    util::{Date, Url, Public, BinaryVec, Timestamp},
+    util::{Date, Url, Public, BinaryVec, SerText, Timestamp},
 };
 use std::convert::TryFrom;
 use std::ops::Deref;
@@ -185,12 +185,38 @@ pub fn stamp_list(id: &str, claim_id_or_name: &str, verbose: bool) -> Result<(),
     let claim = identity.claims().iter()
         .find(|x| {
             x.name().as_ref().map(|y| y == claim_id_or_name).unwrap_or(false) ||
-                id_str!(x.id()).unwrap_or("<bad dates>".into()).starts_with(claim_id_or_name)
+                id_str!(x.id()).unwrap_or("".into()).starts_with(claim_id_or_name)
         })
         .ok_or_else(|| format!("Could not find claim {} in identity {}.", claim_id_or_name, id_str))?;
     let stamps = claim.stamps().iter()
         .collect::<Vec<_>>();
     stamp::print_stamps_table(&stamps, verbose, false)?;
+    Ok(())
+}
+
+pub fn stamp_delete(id: &str, stamp_id: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let transactions = id::try_load_single_identity(id)?;
+    let identity = util::build_identity(&transactions)?;
+    let id_str = id_str!(identity.id())?;
+    let stamp = identity.claims().iter()
+        .find_map(|c| {
+            c.stamps().iter()
+                .find(|s| id_str!(s.id()).unwrap_or("".into()).starts_with(stamp_id))
+        })
+        .ok_or_else(|| format!("Could not find stamp {} in identity {}.", stamp_id, id_str))?;
+    let stamp_text = stamp.serialize_text()
+        .map_err(|e| format!("Problem serializing stamp transaction: {:?}", e))?;
+    println!("{}", stamp_text);
+    println!("----------");
+    if !util::yesno_prompt("Do you wish to delete the above stamp? [Y/n]", "Y")? {
+        println!("Aborted.");
+        return Ok(());
+    }
+    let trans = transactions.delete_stamp(Timestamp::now(), stamp.id().clone())
+        .map_err(|e| format!("Problem creating stamp delete transaction: {:?}", e))?;
+    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
+    let signed = util::sign_helper(&identity, trans, &master_key, stage, sign_with)?;
+    dag::save_or_stage(transactions, signed, stage)?;
     Ok(())
 }
 

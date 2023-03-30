@@ -164,6 +164,13 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
                 format!("Stamp {} has been accepted.", stamp_transaction.id())
             }
         }
+        TransactionBody::DeleteStampV1 { stamp_id } => {
+            if stage {
+                format!("Stamp deletion staged. {}", view_staged())
+            } else {
+                format!("Stamp {} has been deleted.", stamp_id.deref())
+            }
+        }
         TransactionBody::AddSubkeyV1 { key, name, .. } => {
             if stage {
                 format!("New key staged for creation. {}", view_staged())

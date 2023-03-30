@@ -403,19 +403,37 @@ fn run() -> Result<(), String> {
                             .help("The name we're setting for the claim."))
                 )
                 .subcommand(
-                    Command::new("stamps")
-                        .about("List the stamps on a claim")
-                        .alias("list-stamps")
-                        .arg(id_arg("The ID of the identity we are listing stamps for. This overrides the configured default identity."))
-                        .arg(Arg::new("CLAIM")
-                            .required(true)
-                            .index(1)
-                            .help("The ID or name of the claim we're listing stamps for."))
-                        .arg(Arg::new("verbose")
-                            .action(ArgAction::SetTrue)
-                            .short('v')
-                            .long("verbose")
-                            .help("Verbose output, with long-form IDs."))
+                    Command::new("stamp")
+                        .about("View and manage stamps on a claim.")
+                        .subcommand_required(true)
+                        .arg_required_else_help(true)
+                        .subcommand(
+                            Command::new("list")
+                                .about("List the stamps on a claim")
+                                .alias("ls")
+                                .arg(id_arg("The ID of the identity we are listing stamps for. This overrides the configured default identity."))
+                                .arg(Arg::new("CLAIM")
+                                    .required(true)
+                                    .index(1)
+                                    .help("The ID or name of the claim we're listing stamps for."))
+                                .arg(Arg::new("verbose")
+                                    .action(ArgAction::SetTrue)
+                                    .short('v')
+                                    .long("verbose")
+                                    .help("Verbose output, with long-form IDs."))
+                        )
+                        .subcommand(
+                            Command::new("delete")
+                                .about("Delete a stamp from a claim")
+                                .alias("rm")
+                                .arg(id_arg("The ID of the identity we are listing stamps for. This overrides the configured default identity."))
+                                .arg(stage_arg())
+                                .arg(signwith_arg())
+                                .arg(Arg::new("STAMP")
+                                    .required(true)
+                                    .index(1)
+                                    .help("The ID of the stamp we're removing."))
+                        )
                 )
                 .subcommand(
                     Command::new("delete")
@@ -1233,7 +1251,7 @@ fn run() -> Result<(), String> {
                     let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
                     let claim_id = args.get_one::<String>("CLAIM")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a claim ID"))?;
+                        .ok_or(format!("Must specify a CLAIM id"))?;
                     let name = args.get_one::<String>("NAME")
                         .map(|x| x.as_str())
                         .map(|x| if x == "-" { None } else { Some(x) })
@@ -1245,13 +1263,27 @@ fn run() -> Result<(), String> {
                         .map_err(|e| format!("Problem renaming claim: {}", e))?;
                     save_trans!(transactions, master_key, trans, stage, sign_with);
                 }
-                Some(("stamps", args)) => {
-                    let id = id_val(args)?;
-                    let claim = args.get_one::<String>("CLAIM")
-                        .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a CLAIM"))?;
-                    let verbose = args.get_flag("verbose");
-                    commands::claim::stamp_list(&id, claim, verbose)?;
+                Some(("stamp", args)) => {
+                    match args.subcommand() {
+                        Some(("list", args)) => {
+                            let id = id_val(args)?;
+                            let claim = args.get_one::<String>("CLAIM")
+                                .map(|x| x.as_str())
+                                .ok_or(format!("Must specify a CLAIM"))?;
+                            let verbose = args.get_flag("verbose");
+                            commands::claim::stamp_list(&id, claim, verbose)?;
+                        }
+                        Some(("delete", args)) => {
+                            let id = id_val(args)?;
+                            let stage = args.get_flag("stage");
+                            let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
+                            let stamp_id = args.get_one::<String>("STAMP")
+                                .map(|x| x.as_str())
+                                .ok_or(format!("Must specify a STAMP id"))?;
+                            commands::claim::stamp_delete(&id, stamp_id, stage, sign_with)?;
+                        }
+                        _ => unreachable!("Unknown command"),
+                    }
                 }
                 Some(("delete", args)) => {
                     let id = id_val(args)?;
