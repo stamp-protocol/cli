@@ -226,36 +226,40 @@ pub fn save_or_stage(transactions: Transactions, transaction: Transaction, stage
     Ok(transactions)
 }
 
+pub fn transaction_to_string(trans: &Transaction) -> &'static str {
+    match trans.entry().body() {
+        TransactionBody::CreateIdentityV1 { .. } => "CreateIdentityV1",
+        TransactionBody::ResetIdentityV1 { .. } => "ResetIdentityV1",
+        TransactionBody::AddAdminKeyV1 { .. } => "AddAdminKeyV1",
+        TransactionBody::EditAdminKeyV1 { .. } => "EditAdminKeyV1",
+        TransactionBody::RevokeAdminKeyV1 { .. } => "RevokeAdminKeyV1",
+        TransactionBody::AddPolicyV1 { .. } => "AddPolicyV1",
+        TransactionBody::DeletePolicyV1 { .. } => "DeletePolicyV1",
+        TransactionBody::MakeClaimV1 { .. } => "MakeClaimV1",
+        TransactionBody::EditClaimV1 { .. } => "EditClaimV1",
+        TransactionBody::DeleteClaimV1 { .. } => "DeleteClaimV1",
+        TransactionBody::MakeStampV1 { .. } => "MakeStampV1",
+        TransactionBody::RevokeStampV1 { .. } => "RevokeStampV1",
+        TransactionBody::AcceptStampV1 { .. } => "AcceptStampV1",
+        TransactionBody::DeleteStampV1 { .. } => "DeleteStampV1",
+        TransactionBody::AddSubkeyV1 { .. } => "AddSubkeyV1",
+        TransactionBody::EditSubkeyV1 { .. } => "EditSubkeyV1",
+        TransactionBody::RevokeSubkeyV1 { .. } => "RevokeSubkeyV1",
+        TransactionBody::DeleteSubkeyV1 { .. } => "DeleteSubkeyV1",
+        // anything below here should not EVER be part of the DAG, but we
+        // list these anyway because of ocd
+        TransactionBody::PublishV1 { .. } => "PublishV1",
+        TransactionBody::SignV1 { .. } => "SignV1",
+        TransactionBody::ExtV1 { .. } => "ExtV1",
+    }
+}
+
 pub fn print_transactions_table(transactions: &Vec<Transaction>) {
     let mut table = Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
     table.set_titles(row!["ID", "Type", "Signatures", "Created"]);
     for trans in transactions {
-        let ty = match trans.entry().body() {
-            TransactionBody::CreateIdentityV1 { .. } => "CreateIdentityV1",
-            TransactionBody::ResetIdentityV1 { .. } => "ResetIdentityV1",
-            TransactionBody::AddAdminKeyV1 { .. } => "AddAdminKeyV1",
-            TransactionBody::EditAdminKeyV1 { .. } => "EditAdminKeyV1",
-            TransactionBody::RevokeAdminKeyV1 { .. } => "RevokeAdminKeyV1",
-            TransactionBody::AddPolicyV1 { .. } => "AddPolicyV1",
-            TransactionBody::DeletePolicyV1 { .. } => "DeletePolicyV1",
-            TransactionBody::MakeClaimV1 { .. } => "MakeClaimV1",
-            TransactionBody::EditClaimV1 { .. } => "EditClaimV1",
-            TransactionBody::DeleteClaimV1 { .. } => "DeleteClaimV1",
-            TransactionBody::MakeStampV1 { .. } => "MakeStampV1",
-            TransactionBody::RevokeStampV1 { .. } => "RevokeStampV1",
-            TransactionBody::AcceptStampV1 { .. } => "AcceptStampV1",
-            TransactionBody::DeleteStampV1 { .. } => "DeleteStampV1",
-            TransactionBody::AddSubkeyV1 { .. } => "AddSubkeyV1",
-            TransactionBody::EditSubkeyV1 { .. } => "EditSubkeyV1",
-            TransactionBody::RevokeSubkeyV1 { .. } => "RevokeSubkeyV1",
-            TransactionBody::DeleteSubkeyV1 { .. } => "DeleteSubkeyV1",
-            // anything below here should not EVER be part of the DAG, but we
-            // list these anyway because of ocd
-            TransactionBody::PublishV1 { .. } => "PublishV1",
-            TransactionBody::SignV1 { .. } => "SignV1",
-            TransactionBody::ExtV1 { .. } => "ExtV1",
-        };
+        let ty = transaction_to_string(trans);
         let id = id_str!(trans.id())
             .unwrap_or_else(|e| format!("<bad id {:?} -- {:?}>", trans.id(), e));
         let created = trans.entry().created().local().format("%b %e, %Y  %H:%M:%S");

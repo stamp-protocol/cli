@@ -167,6 +167,7 @@ fn run() -> Result<(), String> {
                 .subcommand(
                     Command::new("list")
                         .about("List all locally stored identities (both owned and imported).")
+                        .alias("ls")
                         .arg(Arg::new("verbose")
                             .action(ArgAction::SetTrue)
                             .short('v')
@@ -374,6 +375,7 @@ fn run() -> Result<(), String> {
                 .subcommand(
                     Command::new("list")
                         .about("List the claims on an identity.")
+                        .alias("ls")
                         .arg(id_arg("The ID of the identity we are listing the claims for. This overrides the configured default identity."))
                         .arg(Arg::new("private")
                             .action(ArgAction::SetTrue)
@@ -522,6 +524,7 @@ fn run() -> Result<(), String> {
                 .subcommand(
                     Command::new("list")
                         .about("List all public stamps we have made. To view stamps others have made, see the `stamp claim stamps` command.")
+                        .alias("ls")
                         .arg(id_arg("The ID of the identity we are stamping from. This overrides the configured default identity."))
                         .arg(Arg::new("revoked")
                             .short('r')
@@ -655,6 +658,7 @@ fn run() -> Result<(), String> {
                 .subcommand(
                     Command::new("list")
                         .about("List the keys in a keychain.")
+                        .alias("ls")
                         .arg(Arg::new("type")
                             .short('t')
                             .long("type")
@@ -903,6 +907,7 @@ fn run() -> Result<(), String> {
                 .arg_required_else_help(true)
                 .subcommand(
                     Command::new("list")
+                        .alias("ls")
                         .about("List the staged transactions for an identity.")
                         .arg(id_arg("The ID of the identity we want to see staged transactions for. This overrides the configured default identity."))
                 )
@@ -1009,6 +1014,7 @@ fn run() -> Result<(), String> {
                 .arg_required_else_help(true)
                 .subcommand(
                     Command::new("list")
+                        .alias("ls")
                         .about("List the transactions in an identity.")
                         .arg(id_arg("The ID of the identity we want to see transactions for. This overrides the configured default identity."))
                 )

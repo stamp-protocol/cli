@@ -6,12 +6,13 @@ use crate::{
     db,
     util,
 };
+use prettytable::Table;
 use stamp_aux::{
     db::{delete_staged_transaction, find_staged_transactions, load_staged_transaction, stage_transaction},
 };
 use stamp_core::{
-    dag::{TransactionID},
-    identity::IdentityID,
+    dag::{TransactionID, Transaction},
+    identity::{Identity, IdentityID},
     util::SerText,
 };
 use std::convert::TryFrom;
@@ -21,7 +22,7 @@ pub fn list(id: &str) -> Result<(), String> {
     let identity = util::build_identity(&transactions)?;
     let transactions = find_staged_transactions(identity.id())
         .map_err(|e| format!("Error loading staged transactions: {:?}", e))?;
-    dag::print_transactions_table(&transactions);
+    print_transactions_table(Some(&identity), &transactions);
     Ok(())
 }
 
@@ -103,5 +104,27 @@ pub fn apply(txid: &str) -> Result<(), String> {
     delete_staged_transaction(&transaction_id)
         .map_err(|_| format!("Problem removing staged transaction. The transaction was applied and can be safely removed with:\n  stamp stage delete {}", transaction_id))?;
     Ok(())
+}
+
+pub fn print_transactions_table(identity: Option<&Identity>, transactions: &Vec<Transaction>) {
+    let mut table = Table::new();
+    table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    table.set_titles(row!["ID", "Type", "Signatures", "Ready", "Created"]);
+    for trans in transactions {
+        let ty = dag::transaction_to_string(trans);
+        let id = id_str!(trans.id())
+            .unwrap_or_else(|e| format!("<bad id {:?} -- {:?}>", trans.id(), e));
+        let ready = if trans.verify(identity).is_ok() { "x" } else { "" };
+        let created = trans.entry().created().local().format("%b %e, %Y  %H:%M:%S");
+        let num_sig = trans.signatures().len();
+        table.add_row(row![
+            id,
+            ty,
+            num_sig,
+            ready,
+            created,
+        ]);
+    }
+    table.printstd();
 }
 
