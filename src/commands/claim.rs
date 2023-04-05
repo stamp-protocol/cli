@@ -1,6 +1,7 @@
 use stamp_aux;
 use crate::{
     commands::{dag, id, stamp},
+    config,
     db,
     util,
 };
@@ -217,6 +218,7 @@ pub fn stamp_view(id: &str, stamp_id: &str) -> Result<(), String> {
 }
 
 pub fn stamp_delete(id: &str, stamp_id: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
@@ -230,7 +232,7 @@ pub fn stamp_delete(id: &str, stamp_id: &str, stage: bool, sign_with: Option<&st
         println!("Aborted.");
         return Ok(());
     }
-    let trans = transactions.delete_stamp(Timestamp::now(), stamp.id().clone())
+    let trans = transactions.delete_stamp(&hash_with, Timestamp::now(), stamp.id().clone())
         .map_err(|e| format!("Problem creating stamp delete transaction: {:?}", e))?;
     let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     let signed = util::sign_helper(&identity, trans, &master_key, stage, sign_with)?;

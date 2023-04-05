@@ -1,4 +1,5 @@
 use crate::{
+    config,
     db,
     util,
 };
@@ -61,6 +62,7 @@ pub(crate) fn try_load_single_identity(id: &str) -> Result<Transactions, String>
 }
 
 pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Option<&str>) -> Result<(SecretKey, Transactions, Timestamp), String> {
+    let hash_with = config::hash_algo(None);
     let spinner = ProgressBar::new_spinner();
     spinner.enable_steady_tick(250);
     spinner.set_style(
@@ -78,7 +80,7 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
             .template("[{spinner:.green}] {msg}")
     );
     spinner.set_message("Starting vanity ID search, this might take a while.");
-    let (tmp_master_key, transactions, now) = stamp_aux::id::create_personal_vanity(regex, contains, prefix, |counter| {
+    let (tmp_master_key, transactions, now) = stamp_aux::id::create_personal_vanity(&hash_with, regex, contains, prefix, |counter| {
         spinner.set_message(&format!("Searched {} IDs", counter));
     }).map_err(|e| format!("Error generating vanity id: {}", e))?;
     spinner.finish();
@@ -90,12 +92,13 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
 }
 
 pub fn publish(id: &str, stage: bool, sign_with: Option<&str>) -> Result<String, String> {
+    let hash_with = config::hash_algo(Some(&id));
     let transactions = try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     let now = Timestamp::now();
-    let transaction = transactions.publish(now)
+    let transaction = transactions.publish(&hash_with, now)
         .map_err(|e| format!("Error creating publish transaction: {:?}", e))?;
 
     let signed = util::sign_helper(&identity, transaction, &master_key, stage, sign_with)?;

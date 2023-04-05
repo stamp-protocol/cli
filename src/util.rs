@@ -79,7 +79,7 @@ pub(crate) fn build_identity(transactions: &Transactions) -> Result<Identity, St
 }
 
 fn derive_master(passphrase: &str, now: &stamp_core::util::Timestamp) -> Result<SecretKey, String> {
-    let salt_bytes = stamp_core::crypto::base::Hash::new_blake2b(format!("{}", now.format("%+")).as_bytes())
+    let salt_bytes = stamp_core::crypto::base::Hash::new_blake2b_512(format!("{}", now.format("%+")).as_bytes())
         .map_err(|err| format!("Error deriving master key salt: {:?}", err))?;
     let quick = std::env::var("STAMP_KDF_QUICK")
         .map(|x| x == "1")

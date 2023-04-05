@@ -3,6 +3,7 @@ use crate::{
         claim::claim_pre_noval,
         dag,
     },
+    config,
     util,
     SyncToken,
 };
@@ -14,8 +15,9 @@ use std::convert::TryFrom;
 
 /// Generate a sync token or display the currently saved one.
 pub(crate) fn token(id: &str, blind: bool, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let hash_with = config::hash_algo(Some(&id));
     let (master_key, transactions) = claim_pre_noval(id)?;
-    let (transaction_maybe, seckey) = stamp_aux::sync::gen_token(&master_key, &transactions)
+    let (transaction_maybe, seckey) = stamp_aux::sync::gen_token(&master_key, &transactions, &hash_with)
         .map_err(|e| format!("Error generating sync key: {}", e))?;
     let channel = stamp_aux::sync::shared_key_to_channel(&seckey)
         .map_err(|e| format!("Error converting shared key to channel: {}", e))?;

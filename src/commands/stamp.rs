@@ -1,5 +1,6 @@
 use crate::{
     commands::{dag, id},
+    config,
     db,
     util,
 };
@@ -16,6 +17,7 @@ use stamp_core::{
 use std::convert::TryFrom;
 
 pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let hash_with = config::hash_algo(Some(&our_identity_id));
     let our_transactions = id::try_load_single_identity(our_identity_id)?;
     let their_transactions = db::find_identity_by_prefix("claim", claim_id)?
         .ok_or(format!("Identity with claim {} not found", claim_id))?;
@@ -67,7 +69,7 @@ pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option
     our_transactions.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
     let stamp_entry = StampEntry::new(our_identity.id().clone(), their_identity.id().clone(), claim.id().clone(), confidence, expires);
-    let transaction = our_transactions.make_stamp(Timestamp::now(), stamp_entry)
+    let transaction = our_transactions.make_stamp(&hash_with, Timestamp::now(), stamp_entry)
         .map_err(|e| format!("Error making stamp: {:?}", e))?;
     let signed = util::sign_helper(&our_identity, transaction, &master_key, stage, sign_with)?;
     dag::save_or_stage(our_transactions, signed, stage)?;
@@ -162,6 +164,7 @@ pub fn list(id: &str, revoked: bool, verbose: bool) -> Result<(), String> {
 }
 
 pub fn accept(id: &str, location: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
@@ -179,7 +182,7 @@ pub fn accept(id: &str, location: &str, stage: bool, sign_with: Option<&str>) ->
         println!("Aborted.");
         return Ok(());
     }
-    let trans = transactions.accept_stamp(Timestamp::now(), stamp)
+    let trans = transactions.accept_stamp(&hash_with, Timestamp::now(), stamp)
         .map_err(|e| format!("Problem creating acceptance transaction: {:?}", e))?;
     let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     let signed = util::sign_helper(&identity, trans, &master_key, stage, sign_with)?;
@@ -188,6 +191,7 @@ pub fn accept(id: &str, location: &str, stage: bool, sign_with: Option<&str>) ->
 }
 
 pub fn revoke(id: &str, stamp_search: &str, reason: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
@@ -209,7 +213,7 @@ pub fn revoke(id: &str, stamp_search: &str, reason: &str, stage: bool, sign_with
         "invalid" => RevocationReason::Invalid,
         _ => RevocationReason::Unspecified,
     };
-    let trans = transactions.revoke_stamp(Timestamp::now(), stamp.id().clone(), rev_reason)
+    let trans = transactions.revoke_stamp(&hash_with, Timestamp::now(), stamp.id().clone(), rev_reason)
         .map_err(|e| format!("Problem creating revocation transaction: {:?}", e))?;
     let signed = util::sign_helper(&identity, trans, &master_key, stage, sign_with)?;
     dag::save_or_stage(transactions, signed, stage)?;

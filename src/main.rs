@@ -1044,9 +1044,10 @@ fn run() -> Result<(), String> {
         Some(("id", args)) => {
             match args.subcommand() {
                 Some(("new", _)) => {
+                    let hash_with = config::hash_algo(None);
                     crate::commands::id::passphrase_note();
                     let (transactions, master_key) = util::with_new_passphrase("Your master passphrase", |master_key, now| {
-                        stamp_aux::id::create_personal_random(&master_key, now)
+                        stamp_aux::id::create_personal_random(&master_key, &hash_with, now)
                             .map_err(|e| format!("Error creating identity: {}", e))
                     }, None)?;
                     println!("");
@@ -1056,7 +1057,7 @@ fn run() -> Result<(), String> {
                     println!("Generated a new identity with the ID {}", id_str);
                     println!("");
                     let (name, email) = crate::commands::id::prompt_name_email()?;
-                    let transactions = stamp_aux::id::post_new_personal_id(&master_key, transactions, name, email)
+                    let transactions = stamp_aux::id::post_new_personal_id(&master_key, transactions, &hash_with, name, email)
                         .map_err(|e| format!("Error finalizing identity: {}", e))?;
                     crate::commands::id::post_create(&transactions)?;
                 }
@@ -1071,6 +1072,7 @@ fn run() -> Result<(), String> {
                         println!("Please specify --regex, --contains, or --prefix");
                         return Ok(());
                     }
+                    let hash_with = config::hash_algo(None);
 
                     let (tmp_master_key, transactions, now) = commands::id::create_vanity(regex, contains, prefix)?;
                     crate::commands::id::passphrase_note();
@@ -1078,7 +1080,7 @@ fn run() -> Result<(), String> {
                     let transactions = transactions.reencrypt(&tmp_master_key, &master_key)
                         .map_err(|err| format!("Failed to create identity: {}", err))?;
                     let (name, email) = crate::commands::id::prompt_name_email()?;
-                    let transactions = stamp_aux::id::post_new_personal_id(&master_key, transactions, name, email)
+                    let transactions = stamp_aux::id::post_new_personal_id(&master_key, transactions, &hash_with, name, email)
                         .map_err(|e| format!("Error finalizing identity: {}", e))?;
                     crate::commands::id::post_create(&transactions)?;
                 }
@@ -1176,8 +1178,9 @@ fn run() -> Result<(), String> {
             macro_rules! easy_claim {
                 ($args:ident, $fn:ident, $prompt:expr) => {
                     let (id, private, name, stage, sign_with) = claim_args!($args);
+                    let hash_with = config::hash_algo(Some(&id));
                     let (master_key, transactions, value) = commands::claim::claim_pre(&id, $prompt)?;
-                    let trans = aux_op!(stamp_aux::claim::$fn(&master_key, &transactions, value, private, name))?;
+                    let trans = aux_op!(stamp_aux::claim::$fn(&master_key, &transactions, &hash_with, value, private, name))?;
                     save_trans!(transactions, master_key, trans, stage, sign_with);
                 }
             }
@@ -1201,13 +1204,14 @@ fn run() -> Result<(), String> {
                             let photofile = args.get_one::<String>("PHOTO")
                                 .map(|x| x.as_str())
                                 .ok_or(format!("Must specify a photo"))?;
+                            let hash_with = config::hash_algo(Some(&id));
 
                             let photo_bytes = util::read_file(photofile)?;
                             if photo_bytes.len() > stamp_aux::claim::MAX_PHOTO_BYTES {
                                 Err(format!("Please choose a photo smaller than {} bytes (given photo is {} bytes)", stamp_aux::claim::MAX_PHOTO_BYTES, photo_bytes.len()))?;
                             }
                             let (master_key, transactions) = commands::claim::claim_pre_noval(&id)?;
-                            let trans = aux_op!(stamp_aux::claim::new_photo(&master_key, &transactions, photo_bytes, private, name))?;
+                            let trans = aux_op!(stamp_aux::claim::new_photo(&master_key, &transactions, &hash_with, photo_bytes, private, name))?;
                             save_trans!(transactions, master_key, trans, stage, sign_with);
                         }
                         Some(("pgp", args)) => {
@@ -1227,12 +1231,13 @@ fn run() -> Result<(), String> {
                             let ty = args.get_one::<String>("TYPE")
                                 .map(|x| x.as_str())
                                 .ok_or(format!("Must specify a relationship type"))?;
+                            let hash_with = config::hash_algo(Some(&id));
                             let reltype = match ty {
                                 "org" => RelationshipType::OrganizationMember,
                                 _ => Err(format!("Invalid relationship type: {}", ty))?,
                             };
                             let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter the full Stamp identity id for the entity you are related to")?;
-                            let trans = aux_op!(stamp_aux::claim::new_relation(&master_key, &transactions, reltype, value, private, name))?;
+                            let trans = aux_op!(stamp_aux::claim::new_relation(&master_key, &transactions, &hash_with, reltype, value, private, name))?;
                             save_trans!(transactions, master_key, trans, stage, sign_with);
                         }
                         _ => unreachable!("Unknown command"),
@@ -1271,10 +1276,11 @@ fn run() -> Result<(), String> {
                         .map(|x| x.as_str())
                         .map(|x| if x == "-" { None } else { Some(x) })
                         .ok_or(format!("Must specify a name"))?;
+                    let hash_with = config::hash_algo(Some(&id));
                     let transactions = commands::id::try_load_single_identity(&id)?;
                     let identity = util::build_identity(&transactions)?;
                     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&id)), identity.created())?;
-                    let trans = stamp_aux::claim::rename(&transactions, &claim_id, name)
+                    let trans = stamp_aux::claim::rename(&transactions, &hash_with, &claim_id, name)
                         .map_err(|e| format!("Problem renaming claim: {}", e))?;
                     save_trans!(transactions, master_key, trans, stage, sign_with);
                 }
@@ -1314,13 +1320,14 @@ fn run() -> Result<(), String> {
                     let claim_id = args.get_one::<String>("CLAIM")
                         .map(|x| x.as_str())
                         .ok_or(format!("Must specify a claim ID"))?;
+                    let hash_with = config::hash_algo(Some(&id));
                     let transactions = commands::id::try_load_single_identity(&id)?;
                     let identity = util::build_identity(&transactions)?;
                     if !util::yesno_prompt(&format!("Really delete the claim {} and all of its stamps? [y/N]", claim_id), "n")? {
                         return Ok(());
                     }
                     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&id)), identity.created())?;
-                    let trans = stamp_aux::claim::delete(&transactions, &claim_id)
+                    let trans = stamp_aux::claim::delete(&transactions, &hash_with, &claim_id)
                         .map_err(|e| format!("Problem deleting claim: {}", e))?;
                     save_trans!(transactions, master_key, trans, stage, sign_with);
                 }

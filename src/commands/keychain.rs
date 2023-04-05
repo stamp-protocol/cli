@@ -1,5 +1,6 @@
 use crate::{
     commands::{id, dag},
+    config,
     db,
     util,
 };
@@ -61,6 +62,7 @@ impl From<&Subkey> for PrintableKey {
 }
 
 pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
@@ -71,7 +73,7 @@ pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>, stage: bool, sign
             let admin_keypair = AdminKeypair::new_ed25519(&master_key)
                 .map_err(|e| format!("Error generating key: {:?}", e))?;
             let admin_key = AdminKey::new(admin_keypair, name, desc);
-            transactions.add_admin_key(Timestamp::now(), admin_key)
+            transactions.add_admin_key(&hash_with, Timestamp::now(), admin_key)
                 .map_err(|e| format!("Problem adding key to identity: {:?}", e))?
         }
         "sign" | "crypto" | "secret" => {
@@ -95,7 +97,7 @@ pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>, stage: bool, sign
                 }
                 _ => Err(format!("Invalid key type: {}", ty))?,
             };
-            transactions.add_subkey(Timestamp::now(), key, name, desc)
+            transactions.add_subkey(&hash_with, Timestamp::now(), key, name, desc)
                 .map_err(|e| format!("Problem adding key to identity: {:?}", e))?
         }
         _ => Err(format!("Invalid key type: {}", ty))?,
@@ -150,6 +152,7 @@ pub fn list(id: &str, ty: Option<&str>, revoked: bool, search: Option<&str>) -> 
 }
 
 pub fn update(id: &str, search: &str, name: Option<&str>, desc: Option<Option<&str>>, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
@@ -168,12 +171,12 @@ pub fn update(id: &str, search: &str, name: Option<&str>, desc: Option<Option<&s
 
     let (transaction, _key_id) = match (key_admin, key_subkey) {
         (Some(admin), _) => {
-            let trans = transactions.edit_admin_key(Timestamp::now(), admin.key_id(), name, desc)
+            let trans = transactions.edit_admin_key(&hash_with, Timestamp::now(), admin.key_id(), name, desc)
                 .map_err(|e| format!("Error updating admin key: {:?}", e))?;
             (trans, admin.key().key_id())
         }
         (_, Some(subkey)) => {
-            let trans = transactions.edit_subkey(Timestamp::now(), subkey.key_id(), name, desc)
+            let trans = transactions.edit_subkey(&hash_with, Timestamp::now(), subkey.key_id(), name, desc)
                 .map_err(|e| format!("Error updating subkey: {:?}", e))?;
             (trans, subkey.key_id())
         }
@@ -185,6 +188,7 @@ pub fn update(id: &str, search: &str, name: Option<&str>, desc: Option<Option<&s
 }
 
 pub fn revoke(id: &str, search: &str, reason: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
@@ -209,12 +213,12 @@ pub fn revoke(id: &str, search: &str, reason: &str, stage: bool, sign_with: Opti
     };
     let (transaction, _key_id) = match (key_admin, key_subkey) {
         (Some(admin), _) => {
-            let trans = transactions.revoke_admin_key(Timestamp::now(), admin.key_id(), rev_reason, None::<String>)
+            let trans = transactions.revoke_admin_key(&hash_with, Timestamp::now(), admin.key_id(), rev_reason, None::<String>)
                 .map_err(|e| format!("Error revoking admin key: {:?}", e))?;
             (trans, admin.key().key_id())
         }
         (_, Some(subkey)) => {
-            let trans = transactions.revoke_subkey(Timestamp::now(), subkey.key_id(), rev_reason, None::<String>)
+            let trans = transactions.revoke_subkey(&hash_with, Timestamp::now(), subkey.key_id(), rev_reason, None::<String>)
                 .map_err(|e| format!("Error revoking subkey: {:?}", e))?;
             (trans, subkey.key_id())
         }
@@ -226,6 +230,7 @@ pub fn revoke(id: &str, search: &str, reason: &str, stage: bool, sign_with: Opti
 }
 
 pub fn delete_subkey(id: &str, search: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+    let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
@@ -252,7 +257,7 @@ pub fn delete_subkey(id: &str, search: &str, stage: bool, sign_with: Option<&str
     let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     transactions.test_master_key(&master_key)
         .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
-    let transaction = transactions.delete_subkey(Timestamp::now(), key.key_id())
+    let transaction = transactions.delete_subkey(&hash_with, Timestamp::now(), key.key_id())
         .map_err(|e| format!("Problem deleting subkey from keychain: {:?}", e))?;
     let signed = util::sign_helper(&identity, transaction, &master_key, stage, sign_with)?;
     dag::save_or_stage(transactions, signed, stage)?;
