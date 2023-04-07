@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use crate::{
     commands::{dag, id},
     config,
@@ -16,11 +17,11 @@ use stamp_core::{
 };
 use std::convert::TryFrom;
 
-pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option<&str>) -> Result<()> {
     let hash_with = config::hash_algo(Some(&our_identity_id));
     let our_transactions = id::try_load_single_identity(our_identity_id)?;
     let their_transactions = db::find_identity_by_prefix("claim", claim_id)?
-        .ok_or(format!("Identity with claim {} not found", claim_id))?;
+        .ok_or(anyhow!("Identity with claim {} not found", claim_id))?;
     let our_identity = util::build_identity(&our_transactions)?;
     let their_identity = util::build_identity(&their_transactions)?;
     let claim = their_identity.claims()
@@ -32,7 +33,7 @@ pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option
             }
         })
         // weird if we got here, but let's handle it gracefully...
-        .ok_or(format!("Claim {} not found in identity {}", claim_id, id_str!(their_identity.id())?))?;
+        .ok_or(anyhow!("Claim {} not found in identity {}", claim_id, id_str!(their_identity.id())?))?;
     let their_id_str = id_str!(their_identity.id())?;
     let claim_id_str = id_str!(claim.id())?;
     util::print_wrapped(&format!("You are about to stamp the claim {} made by the identity {}.\n", ClaimID::short(&claim_id_str), IdentityID::short(&their_id_str)));
@@ -54,12 +55,12 @@ pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option
         "medium" => Confidence::Medium,
         "high" => Confidence::High,
         "extreme" => Confidence::Extreme,
-         _ => Err(format!("Invalid confidence value: {}", confidence_val))?,
+         _ => Err(anyhow!("Invalid confidence value: {}", confidence_val))?,
     };
     let expires: Option<Timestamp> = if util::yesno_prompt("Would you like your stamp to expire on a certain date? [y/N]", "n")? {
         let expire_val = util::value_prompt("What date would you like it to expire? [ex 2024-10-13T12:00:00Z]")?;
         let ts: Timestamp = expire_val.parse()
-            .map_err(|e| format!("Error parsing time: {}: {:?}", expire_val, e))?;
+            .map_err(|e| anyhow!("Error parsing time: {}: {}", expire_val, e))?;
         Some(ts)
     } else {
         None
@@ -67,16 +68,16 @@ pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option
     let our_id = id_str!(our_identity.id())?;
     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&our_id)), our_identity.created())?;
     our_transactions.test_master_key(&master_key)
-        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+        .map_err(|e| anyhow!("Incorrect passphrase: {}", e))?;
     let stamp_entry = StampEntry::new(our_identity.id().clone(), their_identity.id().clone(), claim.id().clone(), confidence, expires);
     let transaction = our_transactions.make_stamp(&hash_with, Timestamp::now(), stamp_entry)
-        .map_err(|e| format!("Error making stamp: {:?}", e))?;
+        .map_err(|e| anyhow!("Error making stamp: {}", e))?;
     let signed = util::sign_helper(&our_identity, transaction, &master_key, stage, sign_with)?;
     dag::save_or_stage(our_transactions, signed, stage)?;
     Ok(())
 }
 
-pub fn request(our_identity_id: &str, claim_search: &str, our_crypto_subkey_search: &str, stamper_identity_id: &str, stamper_crypto_subkey_search: &str) -> Result<Vec<u8>, String> {
+pub fn request(our_identity_id: &str, claim_search: &str, our_crypto_subkey_search: &str, stamper_identity_id: &str, stamper_crypto_subkey_search: &str) -> Result<Vec<u8>> {
     let our_transactions = id::try_load_single_identity(our_identity_id)?;
     let stamper_transactions = id::try_load_single_identity(stamper_identity_id)?;
     let our_identity = util::build_identity(&our_transactions)?;
@@ -87,31 +88,31 @@ pub fn request(our_identity_id: &str, claim_search: &str, our_crypto_subkey_sear
             k.key_id().as_string().starts_with(our_crypto_subkey_search) ||
                 k.name() == our_crypto_subkey_search
         })
-        .ok_or_else(|| format!("Cannot find `from` key {}", our_crypto_subkey_search))?;
+        .ok_or_else(|| anyhow!("Cannot find `from` key {}", our_crypto_subkey_search))?;
     let key_to = stamper_identity.keychain().subkeys().iter()
         .find(|k| {
             k.key_id().as_string().starts_with(stamper_crypto_subkey_search) ||
                 k.name() == stamper_crypto_subkey_search
         })
-        .ok_or_else(|| format!("Cannot find `to` key {}", our_crypto_subkey_search))?;
+        .ok_or_else(|| anyhow!("Cannot find `to` key {}", our_crypto_subkey_search))?;
     let claim = our_identity.claims().iter()
         .find(|x| {
             let claim_id = String::try_from(x.id()).unwrap_or("".into());
             claim_id.starts_with(claim_search) ||
                 x.name().as_ref().map(|x| x == claim_search).unwrap_or(false)
         })
-        .ok_or_else(|| format!("Cannot find claim {}", claim_search))?;
+        .ok_or_else(|| anyhow!("Cannot find claim {}", claim_search))?;
     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&our_id)), our_identity.created())?;
     our_transactions.test_master_key(&master_key)
-        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+        .map_err(|e| anyhow!("Incorrect passphrase: {:?}", e))?;
     let req_message = StampRequest::new(&master_key, our_identity.id(), &key_from, &key_to, claim)
-        .map_err(|e| format!("Problem creating stamp request: {:?}", e))?;
+        .map_err(|e| anyhow!("Problem creating stamp request: {:?}", e))?;
     let bytes = req_message.serialize_binary()
-        .map_err(|e| format!("Problem serializing stamp request: {:?}", e))?;
+        .map_err(|e| anyhow!("Problem serializing stamp request: {:?}", e))?;
     Ok(bytes)
 }
 
-pub fn open_request(our_identity_id: &str, our_crypto_subkey_search: &str, req: &str) -> Result<(), String> {
+pub fn open_request(our_identity_id: &str, our_crypto_subkey_search: &str, req: &str) -> Result<()> {
     let our_transactions = id::try_load_single_identity(our_identity_id)?;
     let our_identity = util::build_identity(&our_transactions)?;
     let our_id = id_str!(our_identity.id())?;
@@ -120,34 +121,34 @@ pub fn open_request(our_identity_id: &str, our_crypto_subkey_search: &str, req: 
             k.key_id().as_string().starts_with(our_crypto_subkey_search) ||
                 k.name() == our_crypto_subkey_search
         })
-        .ok_or_else(|| format!("Cannot find `to` key {}", our_crypto_subkey_search))?;
+        .ok_or_else(|| anyhow!("Cannot find `to` key {}", our_crypto_subkey_search))?;
     let sealed_bytes = util::read_file(req)?;
     let sealed_message = Message::deserialize_binary(sealed_bytes.as_slice())
         .or_else(|_| {
             Message::deserialize_binary(&base64_decode(sealed_bytes.as_slice())?)
         })
-        .map_err(|e| format!("Error reading sealed message: {}", e))?;
+        .map_err(|e| anyhow!("Error reading sealed message: {}", e))?;
     let signed_message = sealed_message.signed()
-        .ok_or_else(|| format!("Invalid stemp request message"))?;
+        .ok_or_else(|| anyhow!("Invalid stemp request message"))?;
     let stampee_identity_id = signed_message.signed_by_identity();
     let stampee_key_id = signed_message.signed_by_key();
     let stampee_identity_id_str = id_str!(stampee_identity_id)?;
     let stampee_transactions = id::try_load_single_identity(&stampee_identity_id_str)?;
     let stampee_identity = util::build_identity(&stampee_transactions)?;
     let key_from = stampee_identity.keychain().subkey_by_keyid(stampee_key_id)
-        .ok_or_else(|| format!("Cannot find `from` key {:?}", stampee_key_id))?;
+        .ok_or_else(|| anyhow!("Cannot find `from` key {:?}", stampee_key_id))?;
     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&our_id)), our_identity.created())?;
     our_transactions.test_master_key(&master_key)
-        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+        .map_err(|e| anyhow!("Incorrect passphrase: {:?}", e))?;
     let claim = StampRequest::open(&master_key, &key_to, &key_from, &sealed_message)
-        .map_err(|e| format!("Problem opening stamp request: {:?}", e))?;
+        .map_err(|e| anyhow!("Problem opening stamp request: {:?}", e))?;
     let claim_str = claim.serialize_text()
-        .map_err(|e| format!("Problem serializing claim: {:?}", e))?;
+        .map_err(|e| anyhow!("Problem serializing claim: {:?}", e))?;
     println!("{}", claim_str);
     Ok(())
 }
 
-pub fn list(id: &str, revoked: bool, verbose: bool) -> Result<(), String> {
+pub fn list(id: &str, revoked: bool, verbose: bool) -> Result<()> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let stamps = identity.stamps().iter()
@@ -163,7 +164,7 @@ pub fn list(id: &str, revoked: bool, verbose: bool) -> Result<(), String> {
     Ok(())
 }
 
-pub fn accept(id: &str, location: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+pub fn accept(id: &str, location: &str, stage: bool, sign_with: Option<&str>) -> Result<()> {
     let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
@@ -173,9 +174,9 @@ pub fn accept(id: &str, location: &str, stage: bool, sign_with: Option<&str>) ->
         .or_else(|_| {
             Transaction::deserialize_binary(&base64_decode(stamp_bytes.as_slice())?)
         })
-        .map_err(|e| format!("Error deserializing stamp transaction: {:?}", e))?;
+        .map_err(|e| anyhow!("Error deserializing stamp transaction: {:?}", e))?;
     let stamp_text = stamp.serialize_text()
-        .map_err(|e| format!("Problem serializing stamp transaction: {:?}", e))?;
+        .map_err(|e| anyhow!("Problem serializing stamp transaction: {:?}", e))?;
     println!("{}", stamp_text);
     println!("----------");
     if !util::yesno_prompt("Do you wish to accept the above stamp? [Y/n]", "Y")? {
@@ -183,14 +184,14 @@ pub fn accept(id: &str, location: &str, stage: bool, sign_with: Option<&str>) ->
         return Ok(());
     }
     let trans = transactions.accept_stamp(&hash_with, Timestamp::now(), stamp)
-        .map_err(|e| format!("Problem creating acceptance transaction: {:?}", e))?;
+        .map_err(|e| anyhow!("Problem creating acceptance transaction: {:?}", e))?;
     let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     let signed = util::sign_helper(&identity, trans, &master_key, stage, sign_with)?;
     dag::save_or_stage(transactions, signed, stage)?;
     Ok(())
 }
 
-pub fn revoke(id: &str, stamp_search: &str, reason: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+pub fn revoke(id: &str, stamp_search: &str, reason: &str, stage: bool, sign_with: Option<&str>) -> Result<()> {
     let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
@@ -200,13 +201,13 @@ pub fn revoke(id: &str, stamp_search: &str, reason: &str, stage: bool, sign_with
             let id_str = String::try_from(x.id()).unwrap_or_else(|_| "<bad id>".into());
             id_str.starts_with(stamp_search)
         })
-        .ok_or_else(|| format!("Couldn't find stamp {}", stamp_search))?;
+        .ok_or_else(|| anyhow!("Couldn't find stamp {}", stamp_search))?;
     if stamp.revocation().is_some() {
-        Err(format!("The stamp {} is already revoked", stamp.id()))?;
+        Err(anyhow!("The stamp {} is already revoked", stamp.id()))?;
     }
     let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     transactions.test_master_key(&master_key)
-        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+        .map_err(|e| anyhow!("Incorrect passphrase: {:?}", e))?;
     let rev_reason = match reason {
         "superseded" => RevocationReason::Superseded,
         "compromised" => RevocationReason::Compromised,
@@ -214,13 +215,13 @@ pub fn revoke(id: &str, stamp_search: &str, reason: &str, stage: bool, sign_with
         _ => RevocationReason::Unspecified,
     };
     let trans = transactions.revoke_stamp(&hash_with, Timestamp::now(), stamp.id().clone(), rev_reason)
-        .map_err(|e| format!("Problem creating revocation transaction: {:?}", e))?;
+        .map_err(|e| anyhow!("Problem creating revocation transaction: {:?}", e))?;
     let signed = util::sign_helper(&identity, trans, &master_key, stage, sign_with)?;
     dag::save_or_stage(transactions, signed, stage)?;
     Ok(())
 }
 
-pub fn print_stamps_table(stamps: &Vec<&Stamp>, verbose: bool, show_revoked: bool) -> Result<(), String> {
+pub fn print_stamps_table(stamps: &Vec<&Stamp>, verbose: bool, show_revoked: bool) -> Result<()> {
     let mut table = Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
     let id_field = if verbose { "ID" } else { "ID (short)" };

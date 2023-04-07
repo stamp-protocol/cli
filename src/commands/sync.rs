@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use crate::{
     commands::{
         claim::claim_pre_noval,
@@ -14,13 +15,13 @@ use stamp_net::{Multiaddr};
 use std::convert::TryFrom;
 
 /// Generate a sync token or display the currently saved one.
-pub(crate) fn token(id: &str, blind: bool, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+pub(crate) fn token(id: &str, blind: bool, stage: bool, sign_with: Option<&str>) -> Result<()> {
     let hash_with = config::hash_algo(Some(&id));
     let (master_key, transactions) = claim_pre_noval(id)?;
     let (transaction_maybe, seckey) = stamp_aux::sync::gen_token(&master_key, &transactions, &hash_with)
-        .map_err(|e| format!("Error generating sync key: {}", e))?;
+        .map_err(|e| anyhow!("Error generating sync key: {}", e))?;
     let channel = stamp_aux::sync::shared_key_to_channel(&seckey)
-        .map_err(|e| format!("Error converting shared key to channel: {}", e))?;
+        .map_err(|e| anyhow!("Error converting shared key to channel: {}", e))?;
     let identity = util::build_identity(&transactions)?;
 
     let has_transaction = transaction_maybe.is_some();
@@ -50,30 +51,30 @@ pub(crate) fn token(id: &str, blind: bool, stage: bool, sign_with: Option<&str>)
 /// Start a private sync listener. If the `join` option is pointed at an existing
 /// stamp net node, the listener will join and participate in the larger stamp net
 /// protocol.
-pub(crate) fn listen(token: &SyncToken, bind: Multiaddr, join: Vec<Multiaddr>) -> Result<(), String> {
+pub(crate) fn listen(token: &SyncToken, bind: Multiaddr, join: Vec<Multiaddr>) -> Result<()> {
     let shared_key = if let Some(base64_key) = token.shared_key.as_ref() {
         let bytes = stamp_core::util::base64_decode(base64_key)
-            .map_err(|e| format!("Error decoding shared key: {}", e))?;
+            .map_err(|e| anyhow!("Error decoding shared key: {}", e))?;
         let key = SecretKey::new_xchacha20poly1305_from_slice(&bytes[..])
-            .map_err(|e| format!("Error decoding shared key: {}", e))?;
+            .map_err(|e| anyhow!("Error decoding shared key: {}", e))?;
         Some(key)
     } else {
         None
     };
     stamp_aux::sync::listen(&token.identity_id, &token.channel, shared_key, bind, join)
-        .map_err(|e| format!("Problem starting listener: {}", e))?;
+        .map_err(|e| anyhow!("Problem starting listener: {}", e))?;
     Ok(())
 }
 
 /// Run the sync. This is basically like [listen()][listen] but it quits after
 /// grabbing the first round of identity transactions.
-pub(crate) fn run(id: Option<String>, token_maybe: Option<SyncToken>, join: Vec<Multiaddr>) -> Result<(), String> {
+pub(crate) fn run(id: Option<String>, token_maybe: Option<SyncToken>, join: Vec<Multiaddr>) -> Result<()> {
     let (id_str, channel, shared_key) = match (token_maybe.as_ref(), id) {
         (Some(SyncToken { ref identity_id, ref channel, shared_key: Some(ref base64_key), ..}), _) => {
             let bytes = stamp_core::util::base64_decode(base64_key)
-                .map_err(|e| format!("Error decoding shared key: {}", e))?;
+                .map_err(|e| anyhow!("Error decoding shared key: {}", e))?;
             let key = SecretKey::new_xchacha20poly1305_from_slice(&bytes[..])
-                .map_err(|e| format!("Error decoding shared key: {}", e))?;
+                .map_err(|e| anyhow!("Error decoding shared key: {}", e))?;
             (identity_id.clone(), channel.clone(), key)
         }
         (None, Some(id)) => {
@@ -86,17 +87,17 @@ pub(crate) fn run(id: Option<String>, token_maybe: Option<SyncToken>, join: Vec<
                 .flatten()
                 .map(|x| x.open_and_verify(&master_key))
                 .transpose()
-                .map_err(|e| format!("Error opening sync key: {}", e))?
-                .ok_or(format!("Missing stamp/sync subkey for identity {} (try using a full sync token instead)", id_str))?;
+                .map_err(|e| anyhow!("Error opening sync key: {}", e))?
+                .ok_or(anyhow!("Missing stamp/sync subkey for identity {} (try using a full sync token instead)", id_str))?;
             let channel = stamp_aux::sync::shared_key_to_channel(&seckey)
-                .map_err(|e| format!("Error converting shared key to channel: {}", e))?;
+                .map_err(|e| anyhow!("Error converting shared key to channel: {}", e))?;
             (id_str, channel, seckey)
         }
-        _ => Err(format!("Error selecting identity"))?,
+        _ => Err(anyhow!("Error selecting identity"))?,
     };
     println!("Syncing identity transactions...");
     let (sent, recv) = stamp_aux::sync::run(&id_str, &channel, shared_key, join)
-        .map_err(|e| format!("Problem running sync: {}", e))?;
+        .map_err(|e| anyhow!("Problem running sync: {}", e))?;
     let green = dialoguer::console::Style::new().green();
     println!("Sync finished: sent {} transactions, received {} transactions", green.apply_to(sent), green.apply_to(recv));
     Ok(())

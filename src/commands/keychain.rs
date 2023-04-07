@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use crate::{
     commands::{id, dag},
     config,
@@ -61,53 +62,53 @@ impl From<&Subkey> for PrintableKey {
     }
 }
 
-pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>, stage: bool, sign_with: Option<&str>) -> Result<()> {
     let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
     identity.test_master_key(&master_key)
-        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+        .map_err(|e| anyhow!("Incorrect passphrase: {:?}", e))?;
     let transaction = match ty {
         "admin" => {
             let admin_keypair = AdminKeypair::new_ed25519(&master_key)
-                .map_err(|e| format!("Error generating key: {:?}", e))?;
+                .map_err(|e| anyhow!("Error generating key: {:?}", e))?;
             let admin_key = AdminKey::new(admin_keypair, name, desc);
             transactions.add_admin_key(&hash_with, Timestamp::now(), admin_key)
-                .map_err(|e| format!("Problem adding key to identity: {:?}", e))?
+                .map_err(|e| anyhow!("Problem adding key to identity: {:?}", e))?
         }
         "sign" | "crypto" | "secret" => {
             let key = match ty {
                 "sign" => {
                     let new_key = crypto::base::SignKeypair::new_ed25519(&master_key)
-                        .map_err(|e| format!("Error generating key: {:?}", e))?;
+                        .map_err(|e| anyhow!("Error generating key: {:?}", e))?;
                     Key::new_sign(new_key)
                 }
                 "crypto" => {
                     let new_key = crypto::base::CryptoKeypair::new_curve25519xchacha20poly1305(&master_key)
-                        .map_err(|e| format!("Error generating key: {:?}", e))?;
+                        .map_err(|e| anyhow!("Error generating key: {:?}", e))?;
                     Key::new_crypto(new_key)
                 }
                 "secret" => {
                     let rand_key = crypto::base::SecretKey::new_xchacha20poly1305()
-                        .map_err(|e| format!("Unable to generate key: {}", e))?;
+                        .map_err(|e| anyhow!("Unable to generate key: {}", e))?;
                     let new_key = PrivateWithMac::seal(&master_key, rand_key)
-                        .map_err(|e| format!("Error generating key: {:?}", e))?;
+                        .map_err(|e| anyhow!("Error generating key: {:?}", e))?;
                     Key::new_secret(new_key)
                 }
-                _ => Err(format!("Invalid key type: {}", ty))?,
+                _ => Err(anyhow!("Invalid key type: {}", ty))?,
             };
             transactions.add_subkey(&hash_with, Timestamp::now(), key, name, desc)
-                .map_err(|e| format!("Problem adding key to identity: {:?}", e))?
+                .map_err(|e| anyhow!("Problem adding key to identity: {:?}", e))?
         }
-        _ => Err(format!("Invalid key type: {}", ty))?,
+        _ => Err(anyhow!("Invalid key type: {}", ty))?,
     };
     let signed = util::sign_helper(&identity, transaction, &master_key, stage, sign_with)?;
     dag::save_or_stage(transactions, signed, stage)?;
     Ok(())
 }
 
-pub fn list(id: &str, ty: Option<&str>, revoked: bool, search: Option<&str>) -> Result<(), String> {
+pub fn list(id: &str, ty: Option<&str>, revoked: bool, search: Option<&str>) -> Result<()> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let mut keys: Vec<PrintableKey> = Vec::new();
@@ -151,7 +152,7 @@ pub fn list(id: &str, ty: Option<&str>, revoked: bool, search: Option<&str>) -> 
     Ok(())
 }
 
-pub fn update(id: &str, search: &str, name: Option<&str>, desc: Option<Option<&str>>, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+pub fn update(id: &str, search: &str, name: Option<&str>, desc: Option<Option<&str>>, stage: bool, sign_with: Option<&str>) -> Result<()> {
     let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
@@ -162,32 +163,32 @@ pub fn update(id: &str, search: &str, name: Option<&str>, desc: Option<Option<&s
         .or_else(|| identity.keychain().subkey_by_keyid_str(search));
 
     if key_admin.is_none() && key_subkey.is_none() {
-        Err(format!("Cannot find key {} in identity {}", search, IdentityID::short(&id_str)))?;
+        Err(anyhow!("Cannot find key {} in identity {}", search, IdentityID::short(&id_str)))?;
     }
 
     let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     transactions.test_master_key(&master_key)
-        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+        .map_err(|e| anyhow!("Incorrect passphrase: {:?}", e))?;
 
     let (transaction, _key_id) = match (key_admin, key_subkey) {
         (Some(admin), _) => {
             let trans = transactions.edit_admin_key(&hash_with, Timestamp::now(), admin.key_id(), name, desc)
-                .map_err(|e| format!("Error updating admin key: {:?}", e))?;
+                .map_err(|e| anyhow!("Error updating admin key: {:?}", e))?;
             (trans, admin.key().key_id())
         }
         (_, Some(subkey)) => {
             let trans = transactions.edit_subkey(&hash_with, Timestamp::now(), subkey.key_id(), name, desc)
-                .map_err(|e| format!("Error updating subkey: {:?}", e))?;
+                .map_err(|e| anyhow!("Error updating subkey: {:?}", e))?;
             (trans, subkey.key_id())
         }
-        _ => Err(format!("Unreachable path. Odd."))?,
+        _ => Err(anyhow!("Unreachable path. Odd."))?,
     };
     let signed = util::sign_helper(&identity, transaction, &master_key, stage, sign_with)?;
     dag::save_or_stage(transactions, signed, stage)?;
     Ok(())
 }
 
-pub fn revoke(id: &str, search: &str, reason: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+pub fn revoke(id: &str, search: &str, reason: &str, stage: bool, sign_with: Option<&str>) -> Result<()> {
     let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
@@ -198,12 +199,12 @@ pub fn revoke(id: &str, search: &str, reason: &str, stage: bool, sign_with: Opti
         .or_else(|| identity.keychain().subkey_by_keyid_str(search));
 
     if key_admin.is_none() && key_subkey.is_none() {
-        Err(format!("Cannot find key {} in identity {}", search, IdentityID::short(&id_str)))?;
+        Err(anyhow!("Cannot find key {} in identity {}", search, IdentityID::short(&id_str)))?;
     }
 
     let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     transactions.test_master_key(&master_key)
-        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+        .map_err(|e| anyhow!("Incorrect passphrase: {:?}", e))?;
 
     let rev_reason = match reason {
         "superseded" => RevocationReason::Superseded,
@@ -214,22 +215,22 @@ pub fn revoke(id: &str, search: &str, reason: &str, stage: bool, sign_with: Opti
     let (transaction, _key_id) = match (key_admin, key_subkey) {
         (Some(admin), _) => {
             let trans = transactions.revoke_admin_key(&hash_with, Timestamp::now(), admin.key_id(), rev_reason, None::<String>)
-                .map_err(|e| format!("Error revoking admin key: {:?}", e))?;
+                .map_err(|e| anyhow!("Error revoking admin key: {:?}", e))?;
             (trans, admin.key().key_id())
         }
         (_, Some(subkey)) => {
             let trans = transactions.revoke_subkey(&hash_with, Timestamp::now(), subkey.key_id(), rev_reason, None::<String>)
-                .map_err(|e| format!("Error revoking subkey: {:?}", e))?;
+                .map_err(|e| anyhow!("Error revoking subkey: {:?}", e))?;
             (trans, subkey.key_id())
         }
-        _ => Err(format!("Unreachable path. Odd."))?,
+        _ => Err(anyhow!("Unreachable path. Odd."))?,
     };
     let signed = util::sign_helper(&identity, transaction, &master_key, stage, sign_with)?;
     dag::save_or_stage(transactions, signed, stage)?;
     Ok(())
 }
 
-pub fn delete_subkey(id: &str, search: &str, stage: bool, sign_with: Option<&str>) -> Result<(), String> {
+pub fn delete_subkey(id: &str, search: &str, stage: bool, sign_with: Option<&str>) -> Result<()> {
     let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
@@ -243,7 +244,7 @@ pub fn delete_subkey(id: &str, search: &str, stage: bool, sign_with: Option<&str
                 None
             }
         })
-        .ok_or(format!("Cannot find key {} in identity {}", search, IdentityID::short(&id_str)))?
+        .ok_or(anyhow!("Cannot find key {} in identity {}", search, IdentityID::short(&id_str)))?
         .clone();
     match key.key() {
         Key::Secret(..) => {}
@@ -256,29 +257,29 @@ pub fn delete_subkey(id: &str, search: &str, stage: bool, sign_with: Option<&str
     }
     let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     transactions.test_master_key(&master_key)
-        .map_err(|e| format!("Incorrect passphrase: {:?}", e))?;
+        .map_err(|e| anyhow!("Incorrect passphrase: {:?}", e))?;
     let transaction = transactions.delete_subkey(&hash_with, Timestamp::now(), key.key_id())
-        .map_err(|e| format!("Problem deleting subkey from keychain: {:?}", e))?;
+        .map_err(|e| anyhow!("Problem deleting subkey from keychain: {:?}", e))?;
     let signed = util::sign_helper(&identity, transaction, &master_key, stage, sign_with)?;
     dag::save_or_stage(transactions, signed, stage)?;
     Ok(())
 }
 
-pub fn passwd(id: &str, keyfile: Option<&str>, keyparts: Vec<&str>) -> Result<(), String> {
+pub fn passwd(id: &str, keyfile: Option<&str>, keyparts: Vec<&str>) -> Result<()> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
-    fn master_key_from_base64_shamir_parts(parts: &Vec<&str>) -> Result<SecretKey, String> {
+    fn master_key_from_base64_shamir_parts(parts: &Vec<&str>) -> Result<SecretKey> {
         let keyfile_parts = parts.iter()
             .map(|part| {
-                base64_decode(part.trim()).map_err(|e| format!("Problem reading key part: {:?}", e))
+                base64_decode(part.trim()).map_err(|e| anyhow!("Problem reading key part: {:?}", e))
             })
             .map(|part| {
                 part.and_then(|x| {
                     sharks::Share::try_from(x.as_slice())
-                        .map_err(|e| format!("Problem deserializing key part: {:?}", e))
+                        .map_err(|e| anyhow!("Problem deserializing key part: {:?}", e))
                 })
             })
-            .collect::<Result<Vec<_>, String>>()?;
+            .collect::<Result<Vec<_>>>()?;
         let mut key_bytes = None;
         for min_shares in (0..keyfile_parts.len()).rev() {
             let sharks = sharks::Sharks(min_shares as u8);
@@ -290,63 +291,63 @@ pub fn passwd(id: &str, keyfile: Option<&str>, keyparts: Vec<&str>) -> Result<()
                 _ => {}
             }
         }
-        let key_bytes = key_bytes.ok_or(format!("Could not reconstruct master key."))?;
+        let key_bytes = key_bytes.ok_or(anyhow!("Could not reconstruct master key."))?;
         let master_key = crypto::base::SecretKey::new_xchacha20poly1305_from_slice(key_bytes.as_slice())
-            .map_err(|e| format!("Problem creating master key: {}", e))?;
+            .map_err(|e| anyhow!("Problem creating master key: {}", e))?;
         Ok(master_key)
     }
 
     let master_key = if let Some(keyfile) = keyfile {
         let keyfile_contents = util::read_file(keyfile)?;
         let keyfile_string = String::from_utf8(keyfile_contents)
-            .map_err(|_| format!("Invalid keyfile format."))?;
+            .map_err(|_| anyhow!("Invalid keyfile format."))?;
         let keyfile_parts = keyfile_string.split("\n").collect::<Vec<_>>();
         let master_key = master_key_from_base64_shamir_parts(&keyfile_parts)?;
         identity.test_master_key(&master_key)
-            .map_err(|e| format!("Incorrect master key: {}", e))?;
+            .map_err(|e| anyhow!("Incorrect master key: {}", e))?;
         util::print_wrapped("Successfully recovered master key from keyfile!\n");
         master_key
     } else if keyparts.len() > 0 {
         let master_key = master_key_from_base64_shamir_parts(&keyparts)?;
         identity.test_master_key(&master_key)
-            .map_err(|e| format!("Incorrect master key: {}", e))?;
+            .map_err(|e| anyhow!("Incorrect master key: {}", e))?;
         util::print_wrapped("Successfully recovered master key from key parts!\n");
         master_key
     } else {
         let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
         identity.test_master_key(&master_key)
-            .map_err(|e| format!("Incorrect passphrase: {}", e))?;
+            .map_err(|e| anyhow!("Incorrect passphrase: {}", e))?;
         master_key
     };
     let (_, new_master_key) = util::with_new_passphrase("Your new master passphrase", |_master_key, _now| { Ok(()) }, Some(identity.created().clone()))?;
     let transactions_reencrypted = transactions.reencrypt(&master_key, &new_master_key)
-        .map_err(|e| format!("Password change failed: {}", e))?;
+        .map_err(|e| anyhow!("Password change failed: {}", e))?;
     // make sure it actually works before we save it...
     transactions_reencrypted.test_master_key(&new_master_key)
-        .map_err(|e| format!("Password change failed: {}", e))?;
+        .map_err(|e| anyhow!("Password change failed: {}", e))?;
     db::save_identity(transactions_reencrypted)?;
     println!("Identity re-encrypted with new passphrase!");
     Ok(())
 }
 
-pub fn keyfile(id: &str, shamir: &str, output: &str) -> Result<(), String> {
+pub fn keyfile(id: &str, shamir: &str, output: &str) -> Result<()> {
     let mut shamir_parts = shamir.split("/");
     let min_shares: u8 = shamir_parts.next()
-        .ok_or(format!("Invalid shamir format (must be \"M/S\")"))?
+        .ok_or(anyhow!("Invalid shamir format (must be \"M/S\")"))?
         .parse()
-        .map_err(|_| format!("Invalid shamir format (must be \"M/S\")"))?;
+        .map_err(|_| anyhow!("Invalid shamir format (must be \"M/S\")"))?;
     let num_shares: u8 = shamir_parts.next()
-        .ok_or(format!("Invalid shamir format (must be \"M/S\")"))?
+        .ok_or(anyhow!("Invalid shamir format (must be \"M/S\")"))?
         .parse()
-        .map_err(|_| format!("Invalid shamir format (must be \"M/S\")"))?;
+        .map_err(|_| anyhow!("Invalid shamir format (must be \"M/S\")"))?;
     if min_shares > num_shares {
-        Err(format!("Shamir minimum shares (M) must be equal or lesser to total shares (S)"))?;
+        Err(anyhow!("Shamir minimum shares (M) must be equal or lesser to total shares (S)"))?;
     }
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
     transactions.test_master_key(&master_key)
-        .map_err(|e| format!("Incorrect passphrase: {}", e))?;
+        .map_err(|e| anyhow!("Incorrect passphrase: {}", e))?;
     let sharks = sharks::Sharks(min_shares);
     let dealer = sharks.dealer(master_key.as_ref());
     let shares: Vec<String> = dealer.take(num_shares as usize)
@@ -393,7 +394,7 @@ pub fn print_keys_table(keys: &Vec<PrintableKey>, choice: bool, show_revoked: bo
     table.printstd();
 }
 
-pub fn find_keys_by_search_or_prompt<T, F>(identity: &Identity, key_search: Option<&str>, key_type: &str, key_filter: F) -> Result<Subkey, String>
+pub fn find_keys_by_search_or_prompt<T, F>(identity: &Identity, key_search: Option<&str>, key_type: &str, key_filter: F) -> Result<Subkey>
     where F: Fn(&Subkey) -> Option<&T>,
 {
     #[derive(Debug)]
@@ -432,7 +433,7 @@ pub fn find_keys_by_search_or_prompt<T, F>(identity: &Identity, key_search: Opti
                 if keys_from_id.len() > 1 {
                     FoundOne::Many(keys_from_id)
                 } else if keys_from_id.len() == 0 {
-                    Err(format!("No `{}` keys match that search", key_type))?
+                    Err(anyhow!("No `{}` keys match that search", key_type))?
                 } else {
                     FoundOne::One(keys_from_id[0].clone())
                 }
@@ -448,7 +449,7 @@ pub fn find_keys_by_search_or_prompt<T, F>(identity: &Identity, key_search: Opti
             let keys_as_ref = keys.iter().collect::<Vec<_>>();
 
             choose_key_from("Multiple keys matched your search. Choose which key you want: [1, 2, ...]", &keys_as_ref)
-                .ok_or(format!("The key you chose isn't an option"))?
+                .ok_or(anyhow!("The key you chose isn't an option"))?
         }
         FoundOne::None => {
             let keys_as_ref = identity.keychain().subkeys().iter()
@@ -462,9 +463,9 @@ pub fn find_keys_by_search_or_prompt<T, F>(identity: &Identity, key_search: Opti
                 keys_as_ref[0].clone()
             } else if len > 1 {
                 choose_key_from("Choose which of the keys you want to use: [1, 2, ...]", &keys_as_ref)
-                    .ok_or(format!("The key you chose isn't an option"))?
+                    .ok_or(anyhow!("The key you chose isn't an option"))?
             } else {
-                Err(format!("The identity you are trying to send a message to has no `{}` keys.", key_type))?
+                Err(anyhow!("The identity you are trying to send a message to has no `{}` keys.", key_type))?
             }
         }
     };

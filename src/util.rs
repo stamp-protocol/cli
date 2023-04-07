@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use stamp_aux::{
     id::sign_with_optimal_key,
 };
@@ -13,13 +14,13 @@ use tracing::{warn};
 
 pub(crate) fn term_maxwidth() -> usize { 120 }
 
-pub(crate) fn yesno_prompt(prompt: &str, default: &str) -> Result<bool, String> {
+pub(crate) fn yesno_prompt(prompt: &str, default: &str) -> Result<bool> {
     let yesno: String = dialoguer::Input::new()
         .with_prompt(&text_wrap(prompt))
         .default(default.into())
         .show_default(false)
         .interact_text()
-        .map_err(|e| format!("Error grabbing input: {:?}", e))?;
+        .map_err(|e| anyhow!("Error grabbing input: {:?}", e))?;
     if let Some(ynchar) = yesno.chars().next() {
         if ynchar == 'y' || ynchar == 'Y' {
             return Ok(true);
@@ -28,18 +29,18 @@ pub(crate) fn yesno_prompt(prompt: &str, default: &str) -> Result<bool, String> 
     return Ok(false);
 }
 
-pub(crate) fn value_prompt(prompt: &str) -> Result<String, String> {
+pub(crate) fn value_prompt(prompt: &str) -> Result<String> {
     let val: String = dialoguer::Input::new()
         .with_prompt(prompt)
         .interact_text()
-        .map_err(|e| format!("Error grabbing input: {:?}", e))?;
+        .map_err(|e| anyhow!("Error grabbing input: {:?}", e))?;
     return Ok(val);
 }
 
 macro_rules! id_str {
     ($id:expr) => {
         String::try_from($id)
-            .map_err(|e| format!("There was a problem converting the id {:?} to a string: {:?}", $id, e))
+            .map_err(|e| anyhow::anyhow!("There was a problem converting the id {:?} to a string: {:?}", $id, e))
     }
 }
 
@@ -55,32 +56,32 @@ macro_rules! id_str_split {
     }
 }
 
-pub(crate) fn sign_helper(identity: &Identity, transaction: Transaction, master_key: &SecretKey, stage: bool, sign_with: Option<&str>) -> Result<Transaction, String> {
+pub(crate) fn sign_helper(identity: &Identity, transaction: Transaction, master_key: &SecretKey, stage: bool, sign_with: Option<&str>) -> Result<Transaction> {
     match (stage, sign_with) {
         (true, Some(key_str)) => {
             let admin = identity.keychain().admin_key_by_keyid_str(key_str)
                 .or_else(|| identity.keychain().admin_key_by_name(key_str))
-                .ok_or(String::from("Admin key not found"))?;
+                .ok_or_else(|| anyhow!("Admin key not found"))?;
             let transaction = transaction.sign(master_key, admin)
-                .map_err(|e| format!("Error signing transaction: {:?}", e))?;
+                .map_err(|e| anyhow!("Error signing transaction: {:?}", e))?;
             Ok(transaction)
         }
         _ => {
             let transaction = sign_with_optimal_key(&identity, &master_key, transaction)
-                .map_err(|e| format!("Error signing transaction: {:?}", e))?;
+                .map_err(|e| anyhow!("Error signing transaction: {:?}", e))?;
             Ok(transaction)
         }
     }
 }
 
-pub(crate) fn build_identity(transactions: &Transactions) -> Result<Identity, String> {
+pub(crate) fn build_identity(transactions: &Transactions) -> Result<Identity> {
     transactions.build_identity()
-        .map_err(|e| format!("Problem building identity: {:?}", e))
+        .map_err(|e| anyhow!("Problem building identity: {}", e))
 }
 
-fn derive_master(passphrase: &str, now: &stamp_core::util::Timestamp) -> Result<SecretKey, String> {
+fn derive_master(passphrase: &str, now: &stamp_core::util::Timestamp) -> Result<SecretKey> {
     let salt_bytes = stamp_core::crypto::base::Hash::new_blake2b_512(format!("{}", now.format("%+")).as_bytes())
-        .map_err(|err| format!("Error deriving master key salt: {:?}", err))?;
+        .map_err(|err| anyhow!("Error deriving master key salt: {:?}", err))?;
     let quick = std::env::var("STAMP_KDF_QUICK")
         .map(|x| x == "1")
         .unwrap_or(false);
@@ -90,29 +91,29 @@ fn derive_master(passphrase: &str, now: &stamp_core::util::Timestamp) -> Result<
     let ops = if quick { KDF_OPS_INTERACTIVE } else { KDF_OPS_MODERATE };
     let mem = if quick { KDF_MEM_INTERACTIVE } else { KDF_MEM_MODERATE };
     let master_key = stamp_core::crypto::base::derive_secret_key(passphrase.as_bytes(), salt_bytes.as_bytes(), ops, mem)
-        .map_err(|err| format!("Problem generating master key: {:?}", err))?;
+        .map_err(|err| anyhow!("Problem generating master key: {:?}", err))?;
     Ok(master_key)
 }
 
 /// Grab a password and use it along with a timestamp to generate a master key.
-pub(crate) fn passphrase_prompt<T: Into<String>>(prompt: T, now: &stamp_core::util::Timestamp) -> Result<SecretKey, String> {
+pub(crate) fn passphrase_prompt<T: Into<String>>(prompt: T, now: &stamp_core::util::Timestamp) -> Result<SecretKey> {
     let passphrase = dialoguer::Password::new().with_prompt(prompt).interact()
-        .map_err(|err| format!("There was an error grabbing your passphrase: {:?}", err))?;
+        .map_err(|err| anyhow!("There was an error grabbing your passphrase: {:?}", err))?;
     derive_master(&passphrase, now)
 }
 
-pub(crate) fn with_new_passphrase<F, T>(prompt: &str, gen_fn: F, now: Option<stamp_core::util::Timestamp>) -> Result<(T, SecretKey), String>
-    where F: FnOnce(&stamp_core::crypto::base::SecretKey, stamp_core::util::Timestamp) -> Result<T, String>,
+pub(crate) fn with_new_passphrase<F, T>(prompt: &str, gen_fn: F, now: Option<stamp_core::util::Timestamp>) -> Result<(T, SecretKey)>
+    where F: FnOnce(&stamp_core::crypto::base::SecretKey, stamp_core::util::Timestamp) -> Result<T>,
 {
     let passphrase = dialoguer::Password::new().with_prompt(prompt).interact()
-        .map_err(|err| format!("There was an error grabbing your passphrase: {:?}", err))?;
+        .map_err(|err| anyhow!("There was an error grabbing your passphrase: {:?}", err))?;
     let confirm = dialoguer::Password::new().with_prompt("Confirm passphrase").interact()
-        .map_err(|err| format!("There was an error grabbing your confirmation: {:?}", err))?;
+        .map_err(|err| anyhow!("There was an error grabbing your confirmation: {:?}", err))?;
     if passphrase != confirm {
         if yesno_prompt("Passphrase and confirmation do not match. Try again? [Y/n]", "y")? {
             return with_new_passphrase(prompt, gen_fn, now);
         }
-        return Err(String::from("Passphrase mismatch"));
+        return Err(anyhow!("Passphrase mismatch"));
     }
     let now = now.unwrap_or_else(|| stamp_core::util::Timestamp::now());
     let master_key = derive_master(&passphrase, &now)?;
@@ -120,53 +121,53 @@ pub(crate) fn with_new_passphrase<F, T>(prompt: &str, gen_fn: F, now: Option<sta
     Ok((res?, master_key))
 }
 
-pub fn read_file(filename: &str) -> Result<Vec<u8>, String> {
+pub fn read_file(filename: &str) -> Result<Vec<u8>> {
     if filename == "-" {
         if atty::is(atty::Stream::Stdin) {
             let mut contents = String::new();
             let stdin = std::io::stdin();
             eprintln!("{}", text_wrap("Enter your message and hit enter/return:"));
             stdin.read_line(&mut contents)
-                .map_err(|e| format!("Problem reading file: {}: {:?}", filename, e))?;
+                .map_err(|e| anyhow!("Problem reading file: {}: {:?}", filename, e))?;
             Ok(Vec::from(contents.trim_end_matches('\n').trim_end_matches('\r').as_bytes()))
         } else {
             let mut contents = Vec::new();
             let mut stdin = std::io::stdin();
             stdin.read_to_end(&mut contents)
-                .map_err(|e| format!("Problem reading file: {}: {:?}", filename, e))?;
+                .map_err(|e| anyhow!("Problem reading file: {}: {:?}", filename, e))?;
             Ok(contents)
         }
     } else if filename.starts_with("stamp://") {
-        Err(format!("Reading from a stamp:// URL is not currently implemented"))
+        Err(anyhow!("Reading from a stamp:// URL is not currently implemented"))
     } else {
         load_file(filename)
     }
 }
 
-pub fn write_file(filename: &str, bytes: &[u8]) -> Result<(), String> {
+pub fn write_file(filename: &str, bytes: &[u8]) -> Result<()> {
     if filename == "-" {
         let mut out = std::io::stdout();
         out.write_all(bytes)
-            .map_err(|e| format!("There was a problem outputting the identity: {:?}", e))?;
+            .map_err(|e| anyhow!("There was a problem outputting the identity: {:?}", e))?;
         out.flush()
-            .map_err(|e| format!("There was a problem outputting the identity: {:?}", e))?;
+            .map_err(|e| anyhow!("There was a problem outputting the identity: {:?}", e))?;
         println!("");
     } else {
         let mut handle = File::create(&filename)
-            .map_err(|e| format!("Error opening file: {}: {:?}", filename, e))?;
+            .map_err(|e| anyhow!("Error opening file: {}: {:?}", filename, e))?;
         handle.write_all(bytes)
-            .map_err(|e| format!("Error writing to identity file: {}: {:?}", filename, e))?;
+            .map_err(|e| anyhow!("Error writing to identity file: {}: {:?}", filename, e))?;
     }
     Ok(())
 }
 
-pub fn load_file(filename: &str) -> Result<Vec<u8>, String> {
+pub fn load_file(filename: &str) -> Result<Vec<u8>> {
     let file = File::open(filename)
-        .map_err(|e| format!("Unable to open file: {}: {:?}", filename, e))?;
+        .map_err(|e| anyhow!("Unable to open file: {}: {:?}", filename, e))?;
     let mut reader = BufReader::new(file);
     let mut contents = Vec::new();
     reader.read_to_end(&mut contents)
-        .map_err(|e| format!("Problem reading file: {}: {:?}", filename, e))?;
+        .map_err(|e| anyhow!("Problem reading file: {}: {:?}", filename, e))?;
     Ok(contents)
 }
 

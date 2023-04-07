@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use crate::{
     config,
     db,
@@ -20,7 +21,7 @@ pub(crate) fn passphrase_note() {
     util::print_wrapped("To protect your identity from unauthorized access, enter a long but memorable master passphrase. Choose something personal that is easy for you to remember but hard for someone else to guess.\n\n  Example: my dog butch has a friend named snow\n\nYou can change this later using the `stamp keychain passwd` command.\n\n");
 }
 
-pub(crate) fn prompt_name_email() -> Result<(Option<String>, Option<String>), String> {
+pub(crate) fn prompt_name_email() -> Result<(Option<String>, Option<String>)> {
     println!("It's a good idea to associate your name and email with your identity.");
     if !util::yesno_prompt("Would you like to do this? [Y/n]", "y")? {
         return Ok((None, None));
@@ -28,15 +29,15 @@ pub(crate) fn prompt_name_email() -> Result<(Option<String>, Option<String>), St
     let name: String = dialoguer::Input::new()
         .with_prompt("Your full name")
         .interact_text()
-        .map_err(|e| format!("Error grabbing name input: {:?}", e))?;
+        .map_err(|e| anyhow!("Error grabbing name input: {:?}", e))?;
     let email: String = dialoguer::Input::new()
         .with_prompt("Your primary email")
         .interact_text()
-        .map_err(|e| format!("Error grabbing email input: {:?}", e))?;
+        .map_err(|e| anyhow!("Error grabbing email input: {:?}", e))?;
     Ok((Some(name), Some(email)))
 }
 
-pub(crate) fn post_create(transactions: &Transactions) -> Result<(), String> {
+pub(crate) fn post_create(transactions: &Transactions) -> Result<()> {
     let green = dialoguer::console::Style::new().green();
     let bold = dialoguer::console::Style::new().bold();
     let identity = util::build_identity(transactions)?;
@@ -47,21 +48,21 @@ pub(crate) fn post_create(transactions: &Transactions) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn try_load_single_identity(id: &str) -> Result<Transactions, String> {
+pub(crate) fn try_load_single_identity(id: &str) -> Result<Transactions> {
     let identities = db::load_identities_by_prefix(id)?;
     if identities.len() > 1 {
         let identities = identities.iter()
-            .map(|x| util::build_identity(&x))
-            .collect::<Result<Vec<_>, String>>()?;
+            .map(|x| util::build_identity(x))
+            .collect::<Result<Vec<_>>>()?;
         print_identities_table(&identities, false);
-        Err(format!("Multiple identities matched ID {}", id))?;
+        Err(anyhow!("Multiple identities matched ID {}", id))?;
     } else if identities.len() == 0 {
-        Err(format!("No identities match the ID {}", id))?;
+        Err(anyhow!("No identities match the ID {}", id))?;
     }
     Ok(identities[0].clone())
 }
 
-pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Option<&str>) -> Result<(SecretKey, Transactions, Timestamp), String> {
+pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Option<&str>) -> Result<(SecretKey, Transactions, Timestamp)> {
     let hash_with = config::hash_algo(None);
     let spinner = ProgressBar::new_spinner();
     spinner.enable_steady_tick(250);
@@ -82,7 +83,7 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
     spinner.set_message("Starting vanity ID search, this might take a while.");
     let (tmp_master_key, transactions, now) = stamp_aux::id::create_personal_vanity(&hash_with, regex, contains, prefix, |counter| {
         spinner.set_message(&format!("Searched {} IDs", counter));
-    }).map_err(|e| format!("Error generating vanity id: {}", e))?;
+    }).map_err(|e| anyhow!("Error generating vanity id: {}", e))?;
     spinner.finish();
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
@@ -91,7 +92,7 @@ pub(crate) fn create_vanity(regex: Option<&str>, contains: Vec<&str>, prefix: Op
     Ok((tmp_master_key, transactions, now))
 }
 
-pub fn publish(id: &str, stage: bool, sign_with: Option<&str>) -> Result<String, String> {
+pub fn publish(id: &str, stage: bool, sign_with: Option<&str>) -> Result<String> {
     let hash_with = config::hash_algo(Some(&id));
     let transactions = try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
@@ -99,34 +100,34 @@ pub fn publish(id: &str, stage: bool, sign_with: Option<&str>) -> Result<String,
     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     let now = Timestamp::now();
     let transaction = transactions.publish(&hash_with, now)
-        .map_err(|e| format!("Error creating publish transaction: {:?}", e))?;
+        .map_err(|e| anyhow!("Error creating publish transaction: {:?}", e))?;
 
     let signed = util::sign_helper(&identity, transaction, &master_key, stage, sign_with)?;
     if stage {
         let transaction = stage_transaction(identity.id(), signed)
-            .map_err(|e| format!("Error staging transaction: {:?}", e))?;
+            .map_err(|e| anyhow!("Error staging transaction: {:?}", e))?;
         id_str!(transaction.id())
     } else {
         signed.serialize_text()
-            .map_err(|e| format!("Error serializing transaction: {:?}", e))
+            .map_err(|e| anyhow!("Error serializing transaction: {:?}", e))
     }
 }
 
-pub fn export_private(id: &str) -> Result<Vec<u8>, String> {
+pub fn export_private(id: &str) -> Result<Vec<u8>> {
     let identity = try_load_single_identity(id)?;
     let serialized = identity.serialize_binary()
-        .map_err(|e| format!("There was a problem serializing the identity: {:?}", e))?;
+        .map_err(|e| anyhow!("There was a problem serializing the identity: {:?}", e))?;
     Ok(serialized)
 }
 
-pub fn delete(search: &str, skip_confirm: bool, verbose: bool) -> Result<(), String> {
+pub fn delete(search: &str, skip_confirm: bool, verbose: bool) -> Result<()> {
     let identities = db::list_local_identities(Some(search))?;
     if identities.len() == 0 {
-        Err(format!("No identities match that search"))?;
+        Err(anyhow!("No identities match that search"))?;
     }
     let identities = identities.into_iter()
         .map(|x| util::build_identity(&x))
-        .collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>>>()?;
     print_identities_table(&identities, verbose);
     if !skip_confirm {
         let msg = format!("Permanently delete these {} identities? [y/N]", identities.len());
@@ -143,21 +144,21 @@ pub fn delete(search: &str, skip_confirm: bool, verbose: bool) -> Result<(), Str
     Ok(())
 }
 
-pub fn view(search: &str) -> Result<String, String> {
+pub fn view(search: &str) -> Result<String> {
     let identities = db::list_local_identities(Some(search))?;
     if identities.len() > 1 {
         let identities = identities.iter()
-            .map(|x| util::build_identity(&x))
-            .collect::<Result<Vec<_>, String>>()?;
+            .map(|x| util::build_identity(x))
+            .collect::<Result<Vec<_>>>()?;
         print_identities_table(&identities, false);
-        Err(format!("Multiple identities matched that search"))?;
+        Err(anyhow!("Multiple identities matched that search"))?;
     } else if identities.len() == 0 {
-        Err(format!("No identities match that search"))?;
+        Err(anyhow!("No identities match that search"))?;
     }
     let transactions = identities[0].clone();
     let identity = util::build_identity(&transactions)?;
     let serialized = identity.serialize_text()
-        .map_err(|e| format!("Problem serializing identity: {:?}", e))?;
+        .map_err(|e| anyhow!("Problem serializing identity: {:?}", e))?;
     Ok(serialized)
 }
 

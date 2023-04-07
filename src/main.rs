@@ -5,6 +5,7 @@ mod config;
 mod db;
 mod log;
 
+use anyhow::{anyhow, Result};
 use clap::{
     builder::{Command, TypedValueParser},
     Arg, ArgAction, ArgGroup, ArgMatches,
@@ -29,7 +30,7 @@ impl MultiaddrParser {
 impl TypedValueParser for MultiaddrParser {
     type Value = Multiaddr;
 
-    fn parse_ref(&self, _cmd: &Command, _arg: Option<&Arg>, value: &OsStr) -> Result<Self::Value, clap::error::Error> {
+    fn parse_ref(&self, _cmd: &Command, _arg: Option<&Arg>, value: &OsStr) -> core::result::Result<Self::Value, clap::error::Error> {
         let converted = value.to_string_lossy();
         Self::Value::from_str(&converted).map_err(|e| clap::Error::raw(clap::error::ErrorKind::InvalidValue, e))
     }
@@ -62,7 +63,7 @@ impl SyncTokenParser {
 impl TypedValueParser for SyncTokenParser {
     type Value = SyncToken;
 
-    fn parse_ref(&self, _cmd: &Command, _arg: Option<&Arg>, value: &OsStr) -> Result<Self::Value, clap::error::Error> {
+    fn parse_ref(&self, _cmd: &Command, _arg: Option<&Arg>, value: &OsStr) -> core::result::Result<Self::Value, clap::error::Error> {
         let converted = value.to_string_lossy();
         let parts = converted.split(':').collect::<Vec<_>>();
         let identity_id = parts.get(0)
@@ -74,7 +75,7 @@ impl TypedValueParser for SyncTokenParser {
     }
 }
 
-fn run() -> Result<(), String> {
+fn run() -> Result<()> {
     let conf = config::load()?;
     log::init()?;
     db::ensure_schema()?;
@@ -115,7 +116,7 @@ fn run() -> Result<(), String> {
             .help("Gives this claim a name. This is useful when you want a claim to be easily identifiable by other people or apps (ex \"primary-email\").")
     };
 
-    let id_val = |args: &ArgMatches| -> Result<String, String> {
+    let id_val = |args: &ArgMatches| -> Result<String> {
         args.get_one::<String>("identity")
             .map(|x| x.clone())
             .or_else(|| {
@@ -124,7 +125,7 @@ fn run() -> Result<(), String> {
                 }
                 conf.default_identity.clone()
             })
-            .ok_or(format!("Must specify an ID"))
+            .ok_or(anyhow!("Must specify an ID"))
     };
     let app = Command::new("Stamp")
         .version(env!("CARGO_PKG_VERSION"))
@@ -1048,17 +1049,17 @@ fn run() -> Result<(), String> {
                     crate::commands::id::passphrase_note();
                     let (transactions, master_key) = util::with_new_passphrase("Your master passphrase", |master_key, now| {
                         stamp_aux::id::create_personal_random(&master_key, &hash_with, now)
-                            .map_err(|e| format!("Error creating identity: {}", e))
+                            .map_err(|e| anyhow!("Error creating identity: {}", e))
                     }, None)?;
                     println!("");
-                    let identity = transactions.build_identity()
-                        .map_err(|err| format!("Failed to build identity: {:?}", err))?;
+                    let identity = util::build_identity(&transactions)
+                        .map_err(|err| anyhow!("Failed to build identity: {:?}", err))?;
                     let id_str = id_str!(identity.id())?;
                     println!("Generated a new identity with the ID {}", id_str);
                     println!("");
                     let (name, email) = crate::commands::id::prompt_name_email()?;
                     let transactions = stamp_aux::id::post_new_personal_id(&master_key, transactions, &hash_with, name, email)
-                        .map_err(|e| format!("Error finalizing identity: {}", e))?;
+                        .map_err(|e| anyhow!("Error finalizing identity: {}", e))?;
                     crate::commands::id::post_create(&transactions)?;
                 }
                 Some(("vanity", args)) => {
@@ -1078,10 +1079,10 @@ fn run() -> Result<(), String> {
                     crate::commands::id::passphrase_note();
                     let (_, master_key) = util::with_new_passphrase("Your master passphrase", |_master_key, _now| { Ok(()) }, Some(now.clone()))?;
                     let transactions = transactions.reencrypt(&tmp_master_key, &master_key)
-                        .map_err(|err| format!("Failed to create identity: {}", err))?;
+                        .map_err(|err| anyhow!("Failed to create identity: {}", err))?;
                     let (name, email) = crate::commands::id::prompt_name_email()?;
                     let transactions = stamp_aux::id::post_new_personal_id(&master_key, transactions, &hash_with, name, email)
-                        .map_err(|e| format!("Error finalizing identity: {}", e))?;
+                        .map_err(|e| anyhow!("Error finalizing identity: {}", e))?;
                     crate::commands::id::post_create(&transactions)?;
                 }
                 Some(("list", args)) => {
@@ -1090,18 +1091,18 @@ fn run() -> Result<(), String> {
 
                     let identities = db::list_local_identities(search)?
                         .iter()
-                        .map(|x| util::build_identity(&x))
-                        .collect::<Result<Vec<_>, String>>()?;
+                        .map(|x| util::build_identity(x))
+                        .collect::<Result<Vec<_>>>()?;
                     crate::commands::id::print_identities_table(&identities, verbose);
                 }
                 Some(("import", args)) => {
                     let location = args.get_one::<String>("LOCATION")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a location value"))?;
+                        .ok_or(anyhow!("Must specify a location value"))?;
 
                     let contents = util::load_file(location)?;
                     let (transactions, existing) = stamp_aux::id::import_pre(contents.as_slice())
-                        .map_err(|e| format!("Error importing identity: {}", e))?;
+                        .map_err(|e| anyhow!("Error importing identity: {}", e))?;
                     let identity = util::build_identity(&transactions)?;
                     if existing.is_some() {
                         if !util::yesno_prompt("The identity you're importing already exists locally. Overwrite? [y/N]", "n")? {
@@ -1137,7 +1138,7 @@ fn run() -> Result<(), String> {
                 Some(("delete", args)) => {
                     let search = args.get_one::<String>("SEARCH")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a search value"))?;
+                        .ok_or(anyhow!("Must specify a search value"))?;
                     let skip_confirm = args.get_flag("yes");
                     let verbose = args.get_flag("verbose");
                     commands::id::delete(search, skip_confirm, verbose)?
@@ -1145,7 +1146,7 @@ fn run() -> Result<(), String> {
                 Some(("view", args)) => {
                     let search = args.get_one::<String>("SEARCH")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a search value"))?;
+                        .ok_or(anyhow!("Must specify a search value"))?;
                     let identity = commands::id::view(search)?;
                     println!("{}", identity);
                 }
@@ -1165,7 +1166,7 @@ fn run() -> Result<(), String> {
             }
             macro_rules! aux_op {
                 ($op:expr) => {
-                    $op.map_err(|e| format!("Problem adding claim: {}", e))
+                    $op.map_err(|e| anyhow!("Problem adding claim: {}", e))
                 }
             }
             macro_rules! save_trans {
@@ -1203,12 +1204,12 @@ fn run() -> Result<(), String> {
                             let (id, private, name, stage, sign_with) = claim_args!(args);
                             let photofile = args.get_one::<String>("PHOTO")
                                 .map(|x| x.as_str())
-                                .ok_or(format!("Must specify a photo"))?;
+                                .ok_or(anyhow!("Must specify a photo"))?;
                             let hash_with = config::hash_algo(Some(&id));
 
                             let photo_bytes = util::read_file(photofile)?;
                             if photo_bytes.len() > stamp_aux::claim::MAX_PHOTO_BYTES {
-                                Err(format!("Please choose a photo smaller than {} bytes (given photo is {} bytes)", stamp_aux::claim::MAX_PHOTO_BYTES, photo_bytes.len()))?;
+                                Err(anyhow!("Please choose a photo smaller than {} bytes (given photo is {} bytes)", stamp_aux::claim::MAX_PHOTO_BYTES, photo_bytes.len()))?;
                             }
                             let (master_key, transactions) = commands::claim::claim_pre_noval(&id)?;
                             let trans = aux_op!(stamp_aux::claim::new_photo(&master_key, &transactions, &hash_with, photo_bytes, private, name))?;
@@ -1230,11 +1231,11 @@ fn run() -> Result<(), String> {
                             let (id, private, name, stage, sign_with) = claim_args!(args);
                             let ty = args.get_one::<String>("TYPE")
                                 .map(|x| x.as_str())
-                                .ok_or(format!("Must specify a relationship type"))?;
+                                .ok_or(anyhow!("Must specify a relationship type"))?;
                             let hash_with = config::hash_algo(Some(&id));
                             let reltype = match ty {
                                 "org" => RelationshipType::OrganizationMember,
-                                _ => Err(format!("Invalid relationship type: {}", ty))?,
+                                _ => Err(anyhow!("Invalid relationship type: {}", ty))?,
                             };
                             let (master_key, transactions, value) = commands::claim::claim_pre(&id, "Enter the full Stamp identity id for the entity you are related to")?;
                             let trans = aux_op!(stamp_aux::claim::new_relation(&master_key, &transactions, &hash_with, reltype, value, private, name))?;
@@ -1246,7 +1247,7 @@ fn run() -> Result<(), String> {
                 Some(("check", args)) => {
                     let claim_id = args.get_one::<String>("CLAIM")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a claim ID"))?;
+                        .ok_or(anyhow!("Must specify a claim ID"))?;
                     commands::claim::check(claim_id)?;
                 }
                 Some(("view", args)) => {
@@ -1256,7 +1257,7 @@ fn run() -> Result<(), String> {
                         .unwrap_or("-");
                     let claim_id = args.get_one::<String>("CLAIM")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a claim ID"))?;
+                        .ok_or(anyhow!("Must specify a claim ID"))?;
                     commands::claim::view(&id, claim_id, output)?;
                 }
                 Some(("list", args)) => {
@@ -1271,17 +1272,17 @@ fn run() -> Result<(), String> {
                     let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
                     let claim_id = args.get_one::<String>("CLAIM")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a CLAIM id"))?;
+                        .ok_or(anyhow!("Must specify a CLAIM id"))?;
                     let name = args.get_one::<String>("NAME")
                         .map(|x| x.as_str())
                         .map(|x| if x == "-" { None } else { Some(x) })
-                        .ok_or(format!("Must specify a name"))?;
+                        .ok_or(anyhow!("Must specify a name"))?;
                     let hash_with = config::hash_algo(Some(&id));
                     let transactions = commands::id::try_load_single_identity(&id)?;
                     let identity = util::build_identity(&transactions)?;
                     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&id)), identity.created())?;
                     let trans = stamp_aux::claim::rename(&transactions, &hash_with, &claim_id, name)
-                        .map_err(|e| format!("Problem renaming claim: {}", e))?;
+                        .map_err(|e| anyhow!("Problem renaming claim: {}", e))?;
                     save_trans!(transactions, master_key, trans, stage, sign_with);
                 }
                 Some(("stamp", args)) => {
@@ -1290,7 +1291,7 @@ fn run() -> Result<(), String> {
                             let id = id_val(args)?;
                             let claim = args.get_one::<String>("CLAIM")
                                 .map(|x| x.as_str())
-                                .ok_or(format!("Must specify a CLAIM"))?;
+                                .ok_or(anyhow!("Must specify a CLAIM"))?;
                             let verbose = args.get_flag("verbose");
                             commands::claim::stamp_list(&id, claim, verbose)?;
                         }
@@ -1298,7 +1299,7 @@ fn run() -> Result<(), String> {
                             let id = id_val(args)?;
                             let stamp_id = args.get_one::<String>("STAMP")
                                 .map(|x| x.as_str())
-                                .ok_or(format!("Must specify a STAMP id"))?;
+                                .ok_or(anyhow!("Must specify a STAMP id"))?;
                             commands::claim::stamp_view(&id, stamp_id)?;
                         }
                         Some(("delete", args)) => {
@@ -1307,7 +1308,7 @@ fn run() -> Result<(), String> {
                             let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
                             let stamp_id = args.get_one::<String>("STAMP")
                                 .map(|x| x.as_str())
-                                .ok_or(format!("Must specify a STAMP id"))?;
+                                .ok_or(anyhow!("Must specify a STAMP id"))?;
                             commands::claim::stamp_delete(&id, stamp_id, stage, sign_with)?;
                         }
                         _ => unreachable!("Unknown command"),
@@ -1319,7 +1320,7 @@ fn run() -> Result<(), String> {
                     let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
                     let claim_id = args.get_one::<String>("CLAIM")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a claim ID"))?;
+                        .ok_or(anyhow!("Must specify a claim ID"))?;
                     let hash_with = config::hash_algo(Some(&id));
                     let transactions = commands::id::try_load_single_identity(&id)?;
                     let identity = util::build_identity(&transactions)?;
@@ -1328,7 +1329,7 @@ fn run() -> Result<(), String> {
                     }
                     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&id)), identity.created())?;
                     let trans = stamp_aux::claim::delete(&transactions, &hash_with, &claim_id)
-                        .map_err(|e| format!("Problem deleting claim: {}", e))?;
+                        .map_err(|e| anyhow!("Problem deleting claim: {}", e))?;
                     save_trans!(transactions, master_key, trans, stage, sign_with);
                 }
                 _ => unreachable!("Unknown command")
@@ -1340,7 +1341,7 @@ fn run() -> Result<(), String> {
                     let our_identity_id = id_val(args)?;
                     let claim_id = args.get_one::<String>("CLAIM")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a claim"))?;
+                        .ok_or(anyhow!("Must specify a claim"))?;
                     let stage = args.get_flag("stage");
                     let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
                     commands::stamp::new(&our_identity_id, claim_id, stage, sign_with)?;
@@ -1349,20 +1350,20 @@ fn run() -> Result<(), String> {
                     let id = id_val(args)?;
                     let key_from = args.get_one::<String>("key-from")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify the from key"))?;
+                        .ok_or(anyhow!("Must specify the from key"))?;
                     let stamper_id = args.get_one::<String>("stamper-identity-id")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify the stamper's identity id"))?;
+                        .ok_or(anyhow!("Must specify the stamper's identity id"))?;
                     let key_to = args.get_one::<String>("key-to")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify the to key"))?;
+                        .ok_or(anyhow!("Must specify the to key"))?;
                     let output = args.get_one::<String>("output")
                         .map(|x| x.as_str())
                         .unwrap_or("-");
                     let base64 = args.get_flag("base64");
                     let claim = args.get_one::<String>("CLAIM")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a claim"))?;
+                        .ok_or(anyhow!("Must specify a claim"))?;
                     let req = commands::stamp::request(&id, claim, key_from, stamper_id, key_to)?;
                     if base64 {
                         util::write_file(output, stamp_core::util::base64_encode(req.as_slice()).as_bytes())?;
@@ -1374,7 +1375,7 @@ fn run() -> Result<(), String> {
                     let id = id_val(args)?;
                     let key_to = args.get_one::<String>("key-to")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify the to key"))?;
+                        .ok_or(anyhow!("Must specify the to key"))?;
                     let req = args.get_one::<String>("ENCRYPTED")
                         .map(|x| x.as_str())
                         .unwrap_or("-");
@@ -1390,7 +1391,7 @@ fn run() -> Result<(), String> {
                     let id = id_val(args)?;
                     let stamp = args.get_one::<String>("STAMP")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a STAMP id"))?;
+                        .ok_or(anyhow!("Must specify a STAMP id"))?;
                     let output = args.get_one::<String>("output")
                         .map(|x| x.as_str())
                         .unwrap_or("-");
@@ -1401,7 +1402,7 @@ fn run() -> Result<(), String> {
                     let id = id_val(args)?;
                     let location = args.get_one::<String>("LOCATION")
                         .map(|x| x.as_str())
-                        .ok_or_else(|| format!("Must specify a LOCATION value"))?;
+                        .ok_or_else(|| anyhow!("Must specify a LOCATION value"))?;
                     let stage = args.get_flag("stage");
                     let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
                     commands::stamp::accept(&id, location, stage, sign_with)?;
@@ -1410,7 +1411,7 @@ fn run() -> Result<(), String> {
                     let id = id_val(args)?;
                     let stamp_search = args.get_one::<String>("STAMP")
                         .map(|x| x.as_str())
-                        .ok_or_else(|| format!("Must specify a STAMP value"))?;
+                        .ok_or_else(|| anyhow!("Must specify a STAMP value"))?;
                     let reason = args.get_one::<String>("reason")
                         .map(|x| x.as_str())
                         .unwrap_or("unspecified");
@@ -1429,7 +1430,7 @@ fn run() -> Result<(), String> {
                             let id = id_val($args)?;
                             let name = $args.get_one::<String>("NAME")
                                 .map(|x| x.as_str())
-                                .ok_or(format!("Must specify a name"))?;
+                                .ok_or(anyhow!("Must specify a name"))?;
                             let desc = $args.get_one::<String>("description")
                                 .map(|x| x.as_str());
                             let stage = $args.get_flag("stage");
@@ -1470,7 +1471,7 @@ fn run() -> Result<(), String> {
                     let id = id_val(args)?;
                     let search = args.get_one::<String>("SEARCH")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a key id or name"))?;
+                        .ok_or(anyhow!("Must specify a key id or name"))?;
                     let name = args.get_one::<String>("name")
                         .map(|x| x.as_str());
                     let desc = args.get_one::<String>("description")
@@ -1489,7 +1490,7 @@ fn run() -> Result<(), String> {
                         .unwrap_or("unspecified");
                     let search = args.get_one::<String>("SEARCH")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a key id or name"))?;
+                        .ok_or(anyhow!("Must specify a key id or name"))?;
                     commands::keychain::revoke(&id, search, reason, stage, sign_with)?;
                 }
                 Some(("delete-subkey", args)) => {
@@ -1498,7 +1499,7 @@ fn run() -> Result<(), String> {
                     let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
                     let search = args.get_one::<String>("SEARCH")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a key id or name"))?;
+                        .ok_or(anyhow!("Must specify a key id or name"))?;
                     commands::keychain::delete_subkey(&id, search, stage, sign_with)?;
                 }
                 Some(("passwd", args)) => {
@@ -1537,7 +1538,7 @@ fn run() -> Result<(), String> {
                         .unwrap_or("-");
                     let search = args.get_one::<String>("SEARCH")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a search value"))?;
+                        .ok_or(anyhow!("Must specify a search value"))?;
                     let input = args.get_one::<String>("MESSAGE")
                         .map(|x| x.as_str())
                         .unwrap_or("-");
@@ -1552,7 +1553,7 @@ fn run() -> Result<(), String> {
                         .unwrap_or("-");
                     let search = args.get_one::<String>("SEARCH")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a search value"))?;
+                        .ok_or(anyhow!("Must specify a search value"))?;
                     let input = args.get_one::<String>("MESSAGE")
                         .map(|x| x.as_str())
                         .unwrap_or("-");
@@ -1606,7 +1607,7 @@ fn run() -> Result<(), String> {
                 Some(("set-default", args)) => {
                     let search = args.get_one::<String>("SEARCH")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a search value"))?;
+                        .ok_or(anyhow!("Must specify a search value"))?;
                     commands::config::set_default(search)?;
                 }
                 _ => unreachable!("Unknown command")
@@ -1622,7 +1623,7 @@ fn run() -> Result<(), String> {
                     let id = id_val(args)?;
                     let txid = args.get_one::<String>("TXID")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a TXID"))?;
+                        .ok_or(anyhow!("Must specify a TXID"))?;
                     commands::dag::reset(&id, txid)?;
                 }
                 _ => unreachable!("Unknown command")
@@ -1634,7 +1635,7 @@ fn run() -> Result<(), String> {
                     // no default here, debug commands should be explicit
                     let id = args.get_one::<String>("identity")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify an ID"))?;
+                        .ok_or(anyhow!("Must specify an ID"))?;
                     commands::debug::resave(id)?;
                 }
                 _ => unreachable!("Unknown command")
@@ -1649,27 +1650,27 @@ fn run() -> Result<(), String> {
                 Some(("view", args)) => {
                     let txid = args.get_one::<String>("TXID")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a join token"))?;
+                        .ok_or(anyhow!("Must specify a join token"))?;
                     commands::stage::view(txid)?;
                 }
                 Some(("delete", args)) => {
                     let txid = args.get_one::<String>("TXID")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a join token"))?;
+                        .ok_or(anyhow!("Must specify a join token"))?;
                     commands::stage::delete(txid)?;
                 }
                 Some(("sign", args)) => {
                     let txid = args.get_one::<String>("TXID")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a join token"))?;
+                        .ok_or(anyhow!("Must specify a join token"))?;
                     let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str())
-                        .ok_or(format!("Must specify an admin key to sign with"))?;
+                        .ok_or(anyhow!("Must specify an admin key to sign with"))?;
                     commands::stage::sign(txid, sign_with)?;
                 }
                 Some(("apply", args)) => {
                     let txid = args.get_one::<String>("TXID")
                         .map(|x| x.as_str())
-                        .ok_or(format!("Must specify a join token"))?;
+                        .ok_or(anyhow!("Must specify a join token"))?;
                     commands::stage::apply(txid)?;
                 }
                 _ => unreachable!("Unknown command")
@@ -1679,7 +1680,7 @@ fn run() -> Result<(), String> {
             match args.subcommand() {
                 Some(("listen", args)) => {
                     let token = args.get_one::<SyncToken>("TOKEN")
-                        .ok_or(format!("Must specify a join token"))?
+                        .ok_or(anyhow!("Must specify a join token"))?
                         .clone();
                     let bind = args.get_one::<Multiaddr>("bind")
                         .expect("Missing `bind` argument.")
@@ -1703,7 +1704,7 @@ fn run() -> Result<(), String> {
                     let token = args.get_one::<SyncToken>("TOKEN")
                         .map(|x| x.clone());
                     if id.is_none() && token.is_none() {
-                        Err(format!("Please specify either --identity or <TOKEN>"))?;
+                        Err(anyhow!("Please specify either --identity or <TOKEN>"))?;
                     }
                     let join = args.get_many::<Multiaddr>("join")
                         .into_iter()

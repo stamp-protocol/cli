@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use crate::{
     commands::id,
     db,
@@ -21,36 +22,36 @@ use stamp_core::{
 use std::convert::{TryFrom, From};
 use std::ops::Deref;
 
-pub fn list(id: &str) -> Result<(), String> {
+pub fn list(id: &str) -> Result<()> {
     let transactions = id::try_load_single_identity(id)?;
     print_transactions_table(transactions.transactions());
     Ok(())
 }
 
-pub fn reset(id: &str, txid: &str) -> Result<(), String> {
+pub fn reset(id: &str, txid: &str) -> Result<()> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
     let trans = transactions.transactions().iter()
         .find(|x| id_str!(x.id()).map(|id| id.starts_with(txid)).unwrap_or(false))
-        .ok_or(format!("Transaction {} not found for identity {}", txid, IdentityID::short(&id_str)))?;
+        .ok_or(anyhow!("Transaction {} not found for identity {}", txid, IdentityID::short(&id_str)))?;
     let transactions_reset = transactions.clone().reset(trans.id())
-        .map_err(|e| format!("Problem resetting transactions: {}", e))?;
+        .map_err(|e| anyhow!("Problem resetting transactions: {}", e))?;
     let removed = transactions.transactions().len() - transactions_reset.transactions().len();
     println!("Removed {} transactions from identity {}", removed, IdentityID::short(&id_str));
     db::save_identity(transactions_reset)?;
     Ok(())
 }
 
-pub fn export(id: &str, txid: &str, output: &str, base64: bool) -> Result<(), String> {
+pub fn export(id: &str, txid: &str, output: &str, base64: bool) -> Result<()> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
     let trans = transactions.transactions().iter()
         .find(|x| id_str!(x.id()).map(|id| id.starts_with(txid)).unwrap_or(false))
-        .ok_or(format!("Transaction {} not found for identity {}", txid, IdentityID::short(&id_str)))?;
+        .ok_or(anyhow!("Transaction {} not found for identity {}", txid, IdentityID::short(&id_str)))?;
     let serialized = trans.serialize_binary()
-        .map_err(|e| format!("Problem serializing transaction: {:?}", e))?;
+        .map_err(|e| anyhow!("Problem serializing transaction: {:?}", e))?;
     if base64 {
         let serialized_str = base64_encode(serialized.as_slice());
         util::write_file(output, serialized_str.as_bytes())?;
@@ -60,7 +61,7 @@ pub fn export(id: &str, txid: &str, output: &str, base64: bool) -> Result<(), St
     Ok(())
 }
 
-pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: bool) -> Result<Option<String>, String> {
+pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: bool) -> Result<Option<String>> {
     let identity = util::build_identity(transactions)?;
     let view_staged = || format!("View the staged transaction with:\n  stamp stage view {}", transaction.id());
     let msg = match transaction.entry().body() {
@@ -93,9 +94,9 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
                     ClaimSpec::Domain(MaybePrivate::Public(domain)) => {
                         let claim_id: stamp_core::identity::ClaimID = transaction.id().clone().into();
                         let claim = identity.claims().iter().find(|c| c.id() == &claim_id)
-                            .ok_or_else(|| format!("Unable to find created claim"))?;
+                            .ok_or_else(|| anyhow!("Unable to find created claim"))?;
                         let instant_values = claim.instant_verify_allowed_values(identity.id())
-                            .map_err(|e| format!("Problem grabbing allowed claim values: {}", e))?;
+                            .map_err(|e| anyhow!("Problem grabbing allowed claim values: {}", e))?;
                         format!(
                             "{}\n  {}\n  {}\n",
                             util::text_wrap(&format!("Claim added. You can finalize this claim and make it verifiable instantly to others by adding a DNS TXT record to the domain {} that contains one of the following two values:\n", domain)),
@@ -106,9 +107,9 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
                     ClaimSpec::Url(MaybePrivate::Public(url)) => {
                         let claim_id: stamp_core::identity::ClaimID = transaction.id().clone().into();
                         let claim = identity.claims().iter().find(|c| c.id() == &claim_id)
-                            .ok_or_else(|| format!("Unable to find created claim"))?;
+                            .ok_or_else(|| anyhow!("Unable to find created claim"))?;
                         let instant_values = claim.instant_verify_allowed_values(identity.id())
-                            .map_err(|e| format!("Problem grabbing allowed claim values: {}", e))?;
+                            .map_err(|e| anyhow!("Problem grabbing allowed claim values: {}", e))?;
                         format!(
                             "{}\n  {}\n  {}\n",
                             util::text_wrap(&format!("Claim added. You can finalize this claim and make it verifiable instantly to others by updating the URL {} to contain one of the following two values:\n", url)),
@@ -206,17 +207,17 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
     Ok(Some(msg))
 }
 
-pub fn save_or_stage(transactions: Transactions, transaction: Transaction, stage: bool) -> Result<Transactions, String> {
+pub fn save_or_stage(transactions: Transactions, transaction: Transaction, stage: bool) -> Result<Transactions> {
     let identity_id = transactions.identity_id()
-        .ok_or(format!("Unable to generate identity id"))?;
+        .ok_or(anyhow!("Unable to generate identity id"))?;
     let trans_clone = transaction.clone();
     let transactions = if stage {
         stage_transaction(&identity_id, transaction)
-            .map_err(|e| format!("Error staging transaction: {:?}", e))?;
+            .map_err(|e| anyhow!("Error staging transaction: {:?}", e))?;
         transactions
     } else {
         let transactions_mod = transactions.push_transaction(transaction)
-            .map_err(|e| format!("Error saving transaction: {:?}", e))?;
+            .map_err(|e| anyhow!("Error saving transaction: {:?}", e))?;
         db::save_identity(transactions_mod)?
     };
     let msg = post_save(&transactions, &trans_clone, stage)?;
