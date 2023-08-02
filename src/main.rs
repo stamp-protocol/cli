@@ -9,11 +9,12 @@ use anyhow::{anyhow, Result};
 use clap::{
     builder::{Command, TypedValueParser},
     Arg, ArgAction, ArgGroup, ArgMatches,
+    value_parser,
 };
 use stamp_core::{
     identity::{
         IdentityID,
-        RelationshipType,
+        claim::RelationshipType,
     },
 };
 use stamp_net::{Multiaddr};
@@ -354,6 +355,7 @@ fn run() -> Result<()> {
                 .subcommand(
                     Command::new("check")
                         .about("This command verifies domain and URL claims immediately. This lets us prove ownership of domains, websites, and social media profiles in a distributed fashion without requiring third-party verification. Bye, Keybase.")
+                        .alias("verify")
                         .arg(Arg::new("CLAIM")
                             .required(true)
                             .index(1)
@@ -736,6 +738,19 @@ fn run() -> Result<()> {
                         .arg(id_arg("The ID of the identity we want to change the master passphrase for. This overrides the configured default identity."))
                 )
                 .subcommand(
+                    Command::new("sync-token")
+                        .about("Create and display the token used for private syncing. Generally, you only create a syncing token on one device and then use that token for multiple devices. For devices you trust, you use the full token when running `stamp agent`. For devices on you don't trust (VPS for instance) you'll want to use a blind token, retreived using `stamp keychain sync-token -b`.") 
+                        .arg(id_arg("The ID of the identity we want to set up syncing for. This overrides the configured default identity."))
+                        .arg(stage_arg())
+                        .arg(signwith_arg())
+                        .arg(Arg::new("blind")
+                            .action(ArgAction::SetTrue)
+                            .short('b')
+                            .long("blind")
+                            .num_args(0)
+                            .help("Used when initiating a \"blind\" (non-decrypting) peer/device. Useful for peers on public networks/cloud services."))
+                )
+                .subcommand(
                     Command::new("keyfile")
                         .about("Back up your master key such that it can be used with the `stamp keychain passwd` command to recover your identity in the event you lose your master passphrase. This command has the ability to use Shamir's algorithm so you can split your master key into multiple parts, each of which can be saved to different location (or given to different people). Later, you can recover your master key if you have some minimum number of these parts. If you elect to use Shamir's, each key part will be output on its own line.")
                         .arg(Arg::new("shamir")
@@ -950,63 +965,53 @@ fn run() -> Result<()> {
                 )
         )
         .subcommand(
-            Command::new("sync")
-                .about("Sync your private identity between your devices.")
-                .subcommand_required(true)
-                .arg_required_else_help(true)
-                .after_help("EXAMPLE:\n    # run this on the device that has your full identity\n    stamp sync token -b\n        Your token is: TQzq9RCLXhcNqoqD\n    # run this on a home or public server\n    stamp sync listen TQzq9RCLXhcNqoqD\n        Listening on 44.55.66.77:5757\n    # run this on the device you ran `stamp sync token` on\n    stamp sync run --join 44.55.66.77:5757\n        Syncing!")
-                .subcommand(
-                    Command::new("listen")
-                        .about("Start a long-lived private syncing peer that your devices can talk to.")
-                        .arg(Arg::new("TOKEN")
-                            .index(1)
-                            .required(true)
-                            .value_parser(SyncTokenParser::new())
-                            .help("The token you got from running `stamp sync token -b`"))
-                        .arg(Arg::new("bind")
-                            .short('b')
-                            .long("bind")
-                            .value_name("/ip4/1.2.3.4/tcp/5757")
-                            .default_value("/ip4/0.0.0.0/tcp/5757")
-                            .value_parser(MultiaddrParser::new())
-                            .help("The address to listen on"))
-                        .arg(Arg::new("join")
-                            .action(ArgAction::Append)
-                            .short('j')
-                            .long("join")
-                            .value_parser(MultiaddrParser::new())
-                            .value_name("/dns/boot1.stampnet.org/tcp/5757")
-                            .help("Join an existing node. This can be a node you own, or a public relay which allows secure communication between your personal nodes even behind firewalls. Can be specified multiple times."))
-                )
-                .subcommand(
-                    Command::new("run")
-                        .about("Runs the private sync. On the first run, you will have to specify a listener via --join, but afterwards the listener(s) will be saved and you can omit the --join option.")
-                        .arg(id_arg("The ID of the identity we are syncing. This overrides the configured default identity."))
-                        .arg(Arg::new("TOKEN")
-                            .index(1)
-                            .value_parser(SyncTokenParser::new())
-                            .help("The full syncing token you got from running `stamp sync token`. Only needs to be specified once per identity."))
-                        .arg(Arg::new("join")
-                            .action(ArgAction::Append)
-                            .short('j')
-                            .long("join")
-                            .value_parser(MultiaddrParser::new())
-                            .value_name("/dns/boot1.stampnet.org/tcp/5757")
-                            .help("Join an existing node. This can be a node you own, or a public relay which allows secure communication between your personal nodes even behind firewalls."))
-                )
-                .subcommand(
-                    Command::new("token")
-                        .about("Create and display the token used for private syncing. Generally, you only create a syncing token on one device and then use that token for multiple devices. For devices you trust, you use the full token when running `stamp sync run`. For devices on you don't trust (VPS for instance) you'll want to use a blind token, retreived using `stamp sync token -b`.") 
-                        .arg(id_arg("The ID of the identity we want to set up syncing for. This overrides the configured default identity."))
-                        .arg(stage_arg())
-                        .arg(signwith_arg())
-                        .arg(Arg::new("blind")
-                            .action(ArgAction::SetTrue)
-                            .short('b')
-                            .long("blind")
-                            .num_args(0)
-                            .help("Used when initiating a \"blind\" (non-decrypting) peer/device. Useful for peers on public networks/cloud services."))
-                )
+            Command::new("agent")
+                .about("Creates a long-running agent that handles local application key access, provides private syncing for your identity, and participates in StampNet.")
+                .arg(Arg::new("sync-token")
+                    .short('t')
+                    .long("sync-token")
+                    .value_parser(SyncTokenParser::new())
+                    .help("The sync token you got from running `stamp keychain sync-token`. A blind token can be used (`stamp keychain sync-token -b`) if running on an untrusted device. If ommitted, private syncing will be disabled."))
+                .arg(Arg::new("sync-bind")
+                    .short('b')
+                    .long("sync-bind")
+                    .value_name("/ip4/0.0.0.0/tcp/5757")
+                    .default_value("/ip4/0.0.0.0/tcp/5757")
+                    .value_parser(MultiaddrParser::new())
+                    .help("The address/port to listen on for private syncing. Only used if --sync-token is specified."))
+                .arg(Arg::new("sync-join")
+                    .action(ArgAction::Append)
+                    .short('j')
+                    .long("sync-join")
+                    .value_parser(MultiaddrParser::new())
+                    .value_name("/dns/my.server.net/tcp/5757")
+                    .help("Join an existing private sync node. This can be a node you own, or a public relay which allows secure communication between your personal nodes even behind firewalls. Can be specified multiple times."))
+                .arg(Arg::new("net-bind")
+                    .action(ArgAction::Append)
+                    .short('n')
+                    .long("net-bind")
+                    .value_parser(MultiaddrParser::new())
+                    .value_name("/ip4/0.0.0.0/tcp/5758")
+                    .default_value("/ip4/0.0.0.0/tcp/5758")
+                    .help("The address/port to listen on to run as a StampNet node."))
+                .arg(Arg::new("net-join")
+                    .action(ArgAction::Append)
+                    .short('s')
+                    .long("net-join")
+                    .value_parser(MultiaddrParser::new())
+                    .value_name("/dns/boot1.stampnet.org/tcp/5758")
+                    .help("Join an existing StampNet node. Can be specified multiple times."))
+                .arg(Arg::new("agent-port")
+                    .short('p')
+                    .long("agent-port")
+                    .default_value("5759")
+                    .value_parser(value_parser!(u32))
+                    .help("The port to listen on for local programs wishing to interact with the agent."))
+                .arg(Arg::new("agent-lock-after")
+                    .short('l')
+                    .long("lock-after")
+                    .value_parser(value_parser!(u64))
+                    .help("This security parameter tells the agent to lock its database and throw away the key after N number of seconds of inactivity, requiring you to unlock with the master passphrase again."))
         )
         .subcommand(
             Command::new("dag")
@@ -1202,7 +1207,7 @@ fn run() -> Result<()> {
                         }
                         Some(("photo", args)) => {
                             let (id, private, name, stage, sign_with) = claim_args!(args);
-                            let photofile = args.get_one::<String>("PHOTO")
+                            let photofile = args.get_one::<String>("PHOTO-FILE")
                                 .map(|x| x.as_str())
                                 .ok_or(anyhow!("Must specify a photo"))?;
                             let hash_with = config::hash_algo(Some(&id));
@@ -1512,6 +1517,13 @@ fn run() -> Result<()> {
                         .collect();
                     commands::keychain::passwd(&id, keyfile, keyparts)?;
                 }
+                Some(("sync-token", args)) => {
+                    let id = id_val(args)?;
+                    let stage = args.get_flag("stage");
+                    let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
+                    let blind = args.get_flag("blind");
+                    commands::keychain::sync_token(&id, blind, stage, sign_with)?;
+                }
                 Some(("keyfile", args)) => {
                     let id = id_val(args)?;
                     let shamir = args.get_one::<String>("shamir")
@@ -1676,52 +1688,31 @@ fn run() -> Result<()> {
                 _ => unreachable!("Unknown command")
             }
         }
-        Some(("sync", args)) => {
-            match args.subcommand() {
-                Some(("listen", args)) => {
-                    let token = args.get_one::<SyncToken>("TOKEN")
-                        .ok_or(anyhow!("Must specify a join token"))?
-                        .clone();
-                    let bind = args.get_one::<Multiaddr>("bind")
-                        .expect("Missing `bind` argument.")
-                        .clone();
-                    let join = args.get_many::<Multiaddr>("join")
-                        .into_iter()
-                        .flatten()
-                        .map(|x| x.clone())
-                        .collect::<Vec<_>>();
-                    commands::sync::listen(&token, bind, join)?;
-                }
-                Some(("run", args)) => {
-                    let id = args.get_one::<String>("identity")
-                        .map(|x| String::from(x))
-                        .or_else(|| {
-                            if let Some(id_full) = conf.default_identity.as_ref() {
-                                eprintln!("Selecting default identity {} (override with `--id <ID>`)\n", IdentityID::short(&id_full));
-                            }
-                            conf.default_identity.clone()
-                        });
-                    let token = args.get_one::<SyncToken>("TOKEN")
-                        .map(|x| x.clone());
-                    if id.is_none() && token.is_none() {
-                        Err(anyhow!("Please specify either --identity or <TOKEN>"))?;
-                    }
-                    let join = args.get_many::<Multiaddr>("join")
-                        .into_iter()
-                        .flatten()
-                        .map(|x| x.clone())
-                        .collect::<Vec<_>>();
-                    commands::sync::run(id, token, join)?;
-                }
-                Some(("token", args)) => {
-                    let id = id_val(args)?;
-                    let stage = args.get_flag("stage");
-                    let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
-                    let blind = args.get_flag("blind");
-                    commands::sync::token(&id, blind, stage, sign_with)?;
-                }
-                _ => unreachable!("Unknown command")
-            }
+        Some(("agent", args)) => {
+            let sync_token = args.get_one::<SyncToken>("sync-token")
+                .map(|x| x.clone());
+            let sync_bind = args.get_one::<Multiaddr>("sync-bind")
+                .expect("Missing `sync-bind` argument.")
+                .clone();
+            let sync_join = args.get_many::<Multiaddr>("sync-join")
+                .into_iter()
+                .flatten()
+                .map(|x| x.clone())
+                .collect::<Vec<_>>();
+            let net_bind = args.get_one::<Multiaddr>("net-bind")
+                .expect("Missing `net-bind` argument.")
+                .clone();
+            let net_join = args.get_many::<Multiaddr>("net-join")
+                .into_iter()
+                .flatten()
+                .map(|x| x.clone())
+                .collect::<Vec<_>>();
+            let agent_port = args.get_one::<u32>("agent-port")
+                .map(|x| x.clone());
+            let agent_lock_after = args.get_one::<u64>("agent-lock-after")
+                .map(|x| x.clone());
+
+            commands::agent::run(sync_token, sync_bind, sync_join, net_bind, net_join, agent_port, agent_lock_after)?;
         }
         _ => unreachable!("Unknown command")
     }

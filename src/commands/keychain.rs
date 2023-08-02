@@ -1,6 +1,9 @@
 use anyhow::{anyhow, Result};
 use crate::{
-    commands::{id, dag},
+    commands::{
+        id, dag,
+        claim::claim_pre_noval,
+    },
     config,
     db,
     util,
@@ -12,10 +15,9 @@ use stamp_core::{
         base::{KeyID, SecretKey},
     },
     identity::{
-        ExtendKeypair,
-        IdentityID,
         Identity,
-        keychain::{AdminKey, AdminKeypair, Key, RevocationReason, Subkey},
+        IdentityID,
+        keychain::{AdminKey, AdminKeypair, ExtendKeypair, Key, RevocationReason, Subkey},
     },
     private::PrivateWithMac,
     util::{Timestamp, Public, base64_encode, base64_decode},
@@ -327,6 +329,40 @@ pub fn passwd(id: &str, keyfile: Option<&str>, keyparts: Vec<&str>) -> Result<()
         .map_err(|e| anyhow!("Password change failed: {}", e))?;
     db::save_identity(transactions_reencrypted)?;
     println!("Identity re-encrypted with new passphrase!");
+    Ok(())
+}
+
+/// Generate a sync token or display the currently saved one.
+pub(crate) fn sync_token(id: &str, blind: bool, stage: bool, sign_with: Option<&str>) -> Result<()> {
+    let hash_with = config::hash_algo(Some(&id));
+    let (master_key, transactions) = claim_pre_noval(id)?;
+    let (transaction_maybe, seckey) = stamp_aux::sync::gen_token(&master_key, &transactions, &hash_with)
+        .map_err(|e| anyhow!("Error generating sync key: {}", e))?;
+    let channel = stamp_aux::sync::shared_key_to_channel(&seckey)
+        .map_err(|e| anyhow!("Error converting shared key to channel: {}", e))?;
+    let identity = util::build_identity(&transactions)?;
+
+    let has_transaction = transaction_maybe.is_some();
+    if let Some(transaction) = transaction_maybe {
+        let signed = util::sign_helper(&identity, transaction, &master_key, stage, sign_with)?;
+        dag::save_or_stage(transactions, signed, stage)?;
+    }
+    if !has_transaction || !stage {
+        let id_str = id_str!(identity.id())?;
+        let key_str = stamp_core::util::base64_encode(seckey.as_ref());
+        if blind {
+            let green = dialoguer::console::Style::new().green();
+            eprintln!("Your blind sync token is:\n", );
+            println!("{}:{}", &id_str[0..16], channel);
+            eprintln!("\nThis token can be used on {} devices.", green.apply_to("untrusted"));
+        } else {
+            let red = dialoguer::console::Style::new().red();
+            eprintln!("Your sync token is:\n");
+            println!("{}:{}:{}", &id_str[0..16], channel, key_str);
+            eprintln!("\nThis token must ONLY be used on trusted devices. {}", red.apply_to("Keep it safe!"));
+            eprintln!("Use the -b option for generating an untrusted (blind) token.");
+        }
+    }
     Ok(())
 }
 

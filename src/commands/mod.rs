@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod claim;
 pub mod config;
 pub mod dag;
@@ -8,5 +9,4 @@ pub mod message;
 pub mod sign;
 pub mod stamp;
 pub mod stage;
-pub mod sync;
 
