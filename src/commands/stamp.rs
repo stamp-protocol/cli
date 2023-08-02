@@ -13,8 +13,9 @@ use stamp_core::{
     },
     dag::{Transaction},
     identity::{
-        ClaimID, Confidence, StampEntry, StampRequest, Stamp, IdentityID,
-        stamp::RevocationReason,
+        IdentityID,
+        claim::{ClaimID},
+        stamp::{Confidence, RevocationReason, Stamp, StampEntry, StampRequest},
     },
     util::{Timestamp, SerdeBinary, SerText, base64_decode},
 };

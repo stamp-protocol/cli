@@ -13,7 +13,7 @@ use stamp_core::{
     dag::{TransactionBody, Transaction, Transactions},
     identity::{
         IdentityID,
-        ClaimSpec,
+        claim::ClaimSpec,
         keychain::Key,
     },
     private::MaybePrivate,
@@ -92,7 +92,7 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
             } else {
                 match spec {
                     ClaimSpec::Domain(MaybePrivate::Public(domain)) => {
-                        let claim_id: stamp_core::identity::ClaimID = transaction.id().clone().into();
+                        let claim_id: stamp_core::identity::claim::ClaimID = transaction.id().clone().into();
                         let claim = identity.claims().iter().find(|c| c.id() == &claim_id)
                             .ok_or_else(|| anyhow!("Unable to find created claim"))?;
                         let instant_values = claim.instant_verify_allowed_values(identity.id())
@@ -105,7 +105,7 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
                         )
                     }
                     ClaimSpec::Url(MaybePrivate::Public(url)) => {
-                        let claim_id: stamp_core::identity::ClaimID = transaction.id().clone().into();
+                        let claim_id: stamp_core::identity::claim::ClaimID = transaction.id().clone().into();
                         let claim = identity.claims().iter().find(|c| c.id() == &claim_id)
                             .ok_or_else(|| anyhow!("Unable to find created claim"))?;
                         let instant_values = claim.instant_verify_allowed_values(identity.id())
