@@ -109,7 +109,7 @@ pub fn request(our_identity_id: &str, claim_search: &str, our_crypto_subkey_sear
     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&our_id)), our_identity.created())?;
     our_transactions.test_master_key(&master_key)
         .map_err(|e| anyhow!("Incorrect passphrase: {:?}", e))?;
-    let req_message = StampRequest::new(&master_key, our_identity.id(), &key_from, &key_to, claim, SecretKey::new_xchacha20poly1305()?)
+    let req_message = StampRequest::new_message(&master_key, our_identity.id(), &key_from, &key_to, claim, SecretKey::new_xchacha20poly1305()?)
         .map_err(|e| anyhow!("Problem creating stamp request: {:?}", e))?;
     let bytes = req_message.serialize_binary()
         .map_err(|e| anyhow!("Problem serializing stamp request: {:?}", e))?;

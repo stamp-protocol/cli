@@ -971,7 +971,7 @@ fn run() -> Result<()> {
                     .short('t')
                     .long("sync-token")
                     .value_parser(SyncTokenParser::new())
-                    .help("The sync token you got from running `stamp keychain sync-token`. A blind token can be used (`stamp keychain sync-token -b`) if running on an untrusted device. If ommitted, private syncing will be disabled."))
+                    .help("The sync token you got from running `stamp keychain sync-token`. A blind token can be used (run `stamp keychain sync-token -b` on the originating device) if running on an untrusted device. If ommitted, private syncing will be disabled."))
                 .arg(Arg::new("sync-bind")
                     .short('b')
                     .long("sync-bind")
@@ -986,6 +986,18 @@ fn run() -> Result<()> {
                     .value_parser(MultiaddrParser::new())
                     .value_name("/dns/my.server.net/tcp/5757")
                     .help("Join an existing private sync node. This can be a node you own, or a public relay which allows secure communication between your personal nodes even behind firewalls. Can be specified multiple times."))
+                .arg(Arg::new("agent-port")
+                    .short('p')
+                    .long("agent-port")
+                    .default_value("5759")
+                    .value_parser(value_parser!(u32))
+                    .help("The port to listen on for local programs wishing to interact with the agent."))
+                .arg(Arg::new("agent-lock-after")
+                    .short('l')
+                    .long("lock-after")
+                    .default_value("3600")
+                    .value_parser(value_parser!(u64))
+                    .help("This security parameter tells the agent to lock its database and throw away the key after N number of seconds of inactivity, requiring you to unlock with the master passphrase again."))
                 .arg(Arg::new("net-bind")
                     .action(ArgAction::Append)
                     .short('n')
@@ -1001,17 +1013,6 @@ fn run() -> Result<()> {
                     .value_parser(MultiaddrParser::new())
                     .value_name("/dns/boot1.stampnet.org/tcp/5758")
                     .help("Join an existing StampNet node. Can be specified multiple times."))
-                .arg(Arg::new("agent-port")
-                    .short('p')
-                    .long("agent-port")
-                    .default_value("5759")
-                    .value_parser(value_parser!(u32))
-                    .help("The port to listen on for local programs wishing to interact with the agent."))
-                .arg(Arg::new("agent-lock-after")
-                    .short('l')
-                    .long("lock-after")
-                    .value_parser(value_parser!(u64))
-                    .help("This security parameter tells the agent to lock its database and throw away the key after N number of seconds of inactivity, requiring you to unlock with the master passphrase again."))
         )
         .subcommand(
             Command::new("dag")
@@ -1699,6 +1700,12 @@ fn run() -> Result<()> {
                 .flatten()
                 .map(|x| x.clone())
                 .collect::<Vec<_>>();
+            let agent_port = args.get_one::<u32>("agent-port")
+                .expect("Missing `net-bind` argument.")
+                .clone();
+            let agent_lock_after = args.get_one::<u64>("agent-lock-after")
+                .expect("Missing `net-bind` argument.")
+                .clone();
             let net_bind = args.get_one::<Multiaddr>("net-bind")
                 .expect("Missing `net-bind` argument.")
                 .clone();
@@ -1707,12 +1714,8 @@ fn run() -> Result<()> {
                 .flatten()
                 .map(|x| x.clone())
                 .collect::<Vec<_>>();
-            let agent_port = args.get_one::<u32>("agent-port")
-                .map(|x| x.clone());
-            let agent_lock_after = args.get_one::<u64>("agent-lock-after")
-                .map(|x| x.clone());
 
-            commands::agent::run(sync_token, sync_bind, sync_join, net_bind, net_join, agent_port, agent_lock_after)?;
+            commands::agent::run(sync_token, sync_bind, sync_join, agent_port, agent_lock_after, net_bind, net_join)?;
         }
         _ => unreachable!("Unknown command")
     }
