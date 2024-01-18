@@ -19,7 +19,7 @@ use stamp_core::{
         IdentityID,
         keychain::{AdminKey, AdminKeypair, ExtendKeypair, Key, RevocationReason, Subkey},
     },
-    private::PrivateWithMac,
+    private::PrivateWithHmac,
     util::{Timestamp, Public, base64_encode, base64_decode},
 };
 use std::convert::{TryFrom, TryInto};
@@ -95,7 +95,7 @@ pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>, stage: bool, sign
                 "secret" => {
                     let rand_key = crypto::base::SecretKey::new_xchacha20poly1305(&mut rng)
                         .map_err(|e| anyhow!("Unable to generate key: {}", e))?;
-                    let new_key = PrivateWithMac::seal(&master_key, rand_key)
+                    let new_key = PrivateWithHmac::seal(&mut rng, &master_key, rand_key)
                         .map_err(|e| anyhow!("Error generating key: {:?}", e))?;
                     Key::new_secret(new_key)
                 }
@@ -339,6 +339,7 @@ pub fn passwd(id: &str, keyfile: Option<&str>, keyparts: Vec<&str>) -> Result<()
 
 /// Generate a sync token or display the currently saved one.
 pub(crate) fn sync_token(id: &str, blind: bool, stage: bool, sign_with: Option<&str>) -> Result<()> {
+    /*
     let hash_with = config::hash_algo(Some(&id));
     let (master_key, transactions) = claim_pre_noval(id)?;
     let (transaction_maybe, seckey) = stamp_aux::sync::gen_token(&master_key, &transactions, &hash_with)
@@ -368,6 +369,7 @@ pub(crate) fn sync_token(id: &str, blind: bool, stage: bool, sign_with: Option<&
             eprintln!("Use the -b option for generating an untrusted (blind) token.");
         }
     }
+    */
     Ok(())
 }
 
