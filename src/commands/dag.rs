@@ -99,7 +99,7 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
                             .map_err(|e| anyhow!("Problem grabbing allowed claim values: {}", e))?;
                         format!(
                             "{}\n  {}\n  {}\n",
-                            util::text_wrap(&format!("Claim added. You can finalize this claim and make it verifiable instantly to others by adding a DNS TXT record to the domain {} that contains one of the following two values:\n", domain)),
+                            util::text_wrap(&format!("Claim added. You can finalize this claim and make it verifiable instantly to others by adding a DNS TXT record to the domain {} that contains one of the following values:\n", domain)),
                             instant_values[0],
                             instant_values[1]
                         )
@@ -111,10 +111,12 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
                         let instant_values = claim.instant_verify_allowed_values(identity.id())
                             .map_err(|e| anyhow!("Problem grabbing allowed claim values: {}", e))?;
                         format!(
-                            "{}\n  {}\n  {}\n",
-                            util::text_wrap(&format!("Claim added. You can finalize this claim and make it verifiable instantly to others by updating the URL {} to contain one of the following two values:\n", url)),
+                            "{}\n  {}\n  {}\n  {}\n  {}\n",
+                            util::text_wrap(&format!("Claim added. You can finalize this claim and make it verifiable instantly to others by updating the URL {} to contain one of the following values:\n", url)),
                             instant_values[0],
-                            instant_values[1]
+                            instant_values[1],
+                            instant_values[2],
+                            instant_values[3],
                         )
                     }
                     _ => {
