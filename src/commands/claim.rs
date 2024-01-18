@@ -8,7 +8,7 @@ use crate::{
 use prettytable::Table;
 use stamp_aux;
 use stamp_core::{
-    crypto::base::SecretKey,
+    crypto::base::{SecretKey, rng},
     dag::{TransactionID, Transactions},
     identity::{
         Identity,
@@ -58,7 +58,8 @@ fn unwrap_maybe<T, F>(maybe: &MaybePrivate<T>, masterkey_fn: F) -> Result<T>
         maybe.open(&master_key)
             .map_err(|e| anyhow!("Unable to open private claim: {}", e))
     } else {
-        let fake_master_key = SecretKey::new_xchacha20poly1305()
+        let mut rng = rng::chacha20();
+        let fake_master_key = SecretKey::new_xchacha20poly1305(&mut rng)
             .map_err(|e| anyhow!("Unable to generate key: {}", e))?;
         maybe.open(&fake_master_key)
             .map_err(|e| anyhow!("Unable to open claim: {}", e))

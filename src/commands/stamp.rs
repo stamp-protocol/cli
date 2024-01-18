@@ -8,7 +8,7 @@ use crate::{
 use prettytable::Table;
 use stamp_core::{
     crypto::{
-        base::SecretKey,
+        base::{SecretKey, rng},
         message::{Message},
     },
     dag::{Transaction},
@@ -82,6 +82,7 @@ pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option
 }
 
 pub fn request(our_identity_id: &str, claim_search: &str, our_crypto_subkey_search: &str, stamper_identity_id: &str, stamper_crypto_subkey_search: &str) -> Result<Vec<u8>> {
+    let mut rng = rng::chacha20();
     let our_transactions = id::try_load_single_identity(our_identity_id)?;
     let stamper_transactions = id::try_load_single_identity(stamper_identity_id)?;
     let our_identity = util::build_identity(&our_transactions)?;
@@ -109,7 +110,8 @@ pub fn request(our_identity_id: &str, claim_search: &str, our_crypto_subkey_sear
     let master_key = util::passphrase_prompt(&format!("Your master passphrase for identity {}", IdentityID::short(&our_id)), our_identity.created())?;
     our_transactions.test_master_key(&master_key)
         .map_err(|e| anyhow!("Incorrect passphrase: {:?}", e))?;
-    let req_message = StampRequest::new_message(&master_key, our_identity.id(), &key_from, &key_to, claim, SecretKey::new_xchacha20poly1305()?)
+    let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng)?;
+    let req_message = StampRequest::new_message(&mut rng, &master_key, our_identity.id(), &key_from, &key_to, claim, sk_tmp)
         .map_err(|e| anyhow!("Problem creating stamp request: {:?}", e))?;
     let bytes = req_message.serialize_binary()
         .map_err(|e| anyhow!("Problem serializing stamp request: {:?}", e))?;

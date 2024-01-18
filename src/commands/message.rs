@@ -5,13 +5,17 @@ use crate::{
     util,
 };
 use stamp_core::{
-    crypto::message::{self, Message},
+    crypto::{
+        base::rng,
+        message::{self, Message},
+    },
     identity::IdentityID,
     util::{base64_encode, base64_decode, SerdeBinary},
 };
 use std::convert::TryFrom;
 
 pub fn send(id_from: &str, key_search_from: Option<&str>, key_search_to: Option<&str>, input: &str, output: &str, search_to: &str, base64: bool) -> Result<()> {
+    let mut rng = rng::chacha20();
     let transactions_from = id::try_load_single_identity(id_from)?;
     let identity_from = util::build_identity(&transactions_from)?;
     let identities = db::list_local_identities(Some(search_to))?;
@@ -34,7 +38,7 @@ pub fn send(id_from: &str, key_search_from: Option<&str>, key_search_to: Option<
     let master_key_from = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity_from.created())?;
     transactions_from.test_master_key(&master_key_from)
         .map_err(|e| anyhow!("Incorrect passphrase: {}", e))?;
-    let sealed = message::send(&master_key_from, identity_from.id(), &key_from, &key_to, msg_bytes.as_slice())
+    let sealed = message::send(&mut rng, &master_key_from, identity_from.id(), &key_from, &key_to, msg_bytes.as_slice())
         .map_err(|e| anyhow!("Problem sealing the message: {}", e))?;
     let serialized = sealed.serialize_binary()
         .map_err(|e| anyhow!("Problem serializing the sealed message: {}", e))?;
@@ -48,6 +52,7 @@ pub fn send(id_from: &str, key_search_from: Option<&str>, key_search_to: Option<
 }
 
 pub fn send_anonymous(key_search_to: Option<&str>, input: &str, output: &str, search_to: &str, base64: bool) -> Result<()> {
+    let mut rng = rng::chacha20();
     let identities = db::list_local_identities(Some(search_to))?;
     if identities.len() > 1 {
         let identities_vec = identities.iter()
@@ -63,7 +68,7 @@ pub fn send_anonymous(key_search_to: Option<&str>, input: &str, output: &str, se
     let key_to = keychain::find_keys_by_search_or_prompt(&identity_to, key_search_to, "crypto", |sub| sub.key().as_cryptokey())?;
 
     let msg_bytes = util::read_file(input)?;
-    let sealed = message::send_anonymous(&key_to, msg_bytes.as_slice())
+    let sealed = message::send_anonymous(&mut rng, &key_to, msg_bytes.as_slice())
         .map_err(|e| anyhow!("Problem sealing the message: {}", e))?;
     let serialized = sealed.serialize_binary()
         .map_err(|e| anyhow!("Problem serializing the sealed message: {}", e))?;

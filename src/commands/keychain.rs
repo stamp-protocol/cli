@@ -12,7 +12,7 @@ use prettytable::Table;
 use stamp_core::{
     crypto::{
         self,
-        base::{KeyID, SecretKey},
+        base::{KeyID, SecretKey, rng},
     },
     identity::{
         Identity,
@@ -22,7 +22,7 @@ use stamp_core::{
     private::PrivateWithMac,
     util::{Timestamp, Public, base64_encode, base64_decode},
 };
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 
 pub struct PrintableKey {
     key_id: KeyID,
@@ -65,6 +65,7 @@ impl From<&Subkey> for PrintableKey {
 }
 
 pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>, stage: bool, sign_with: Option<&str>) -> Result<()> {
+    let mut rng = rng::chacha20();
     let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
@@ -73,7 +74,7 @@ pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>, stage: bool, sign
         .map_err(|e| anyhow!("Incorrect passphrase: {:?}", e))?;
     let transaction = match ty {
         "admin" => {
-            let admin_keypair = AdminKeypair::new_ed25519(&master_key)
+            let admin_keypair = AdminKeypair::new_ed25519(&mut rng, &master_key)
                 .map_err(|e| anyhow!("Error generating key: {:?}", e))?;
             let admin_key = AdminKey::new(admin_keypair, name, desc);
             transactions.add_admin_key(&hash_with, Timestamp::now(), admin_key)
@@ -82,17 +83,17 @@ pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>, stage: bool, sign
         "sign" | "crypto" | "secret" => {
             let key = match ty {
                 "sign" => {
-                    let new_key = crypto::base::SignKeypair::new_ed25519(&master_key)
+                    let new_key = crypto::base::SignKeypair::new_ed25519(&mut rng, &master_key)
                         .map_err(|e| anyhow!("Error generating key: {:?}", e))?;
                     Key::new_sign(new_key)
                 }
                 "crypto" => {
-                    let new_key = crypto::base::CryptoKeypair::new_curve25519xchacha20poly1305(&master_key)
+                    let new_key = crypto::base::CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key)
                         .map_err(|e| anyhow!("Error generating key: {:?}", e))?;
                     Key::new_crypto(new_key)
                 }
                 "secret" => {
-                    let rand_key = crypto::base::SecretKey::new_xchacha20poly1305()
+                    let rand_key = crypto::base::SecretKey::new_xchacha20poly1305(&mut rng)
                         .map_err(|e| anyhow!("Unable to generate key: {}", e))?;
                     let new_key = PrivateWithMac::seal(&master_key, rand_key)
                         .map_err(|e| anyhow!("Error generating key: {:?}", e))?;
@@ -268,6 +269,7 @@ pub fn delete_subkey(id: &str, search: &str, stage: bool, sign_with: Option<&str
 }
 
 pub fn passwd(id: &str, keyfile: Option<&str>, keyparts: Vec<&str>) -> Result<()> {
+    let mut rng = rng::chacha20();
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     fn master_key_from_base64_shamir_parts(parts: &Vec<&str>) -> Result<SecretKey> {
@@ -293,8 +295,11 @@ pub fn passwd(id: &str, keyfile: Option<&str>, keyparts: Vec<&str>) -> Result<()
                 _ => {}
             }
         }
-        let key_bytes = key_bytes.ok_or(anyhow!("Could not reconstruct master key."))?;
-        let master_key = crypto::base::SecretKey::new_xchacha20poly1305_from_slice(key_bytes.as_slice())
+        let key_bytes: [u8; 32] = key_bytes
+            .ok_or(anyhow!("Could not reconstruct master key."))?
+            .as_slice()
+            .try_into()?;
+        let master_key = crypto::base::SecretKey::new_xchacha20poly1305_from_bytes(key_bytes)
             .map_err(|e| anyhow!("Problem creating master key: {}", e))?;
         Ok(master_key)
     }
@@ -322,7 +327,7 @@ pub fn passwd(id: &str, keyfile: Option<&str>, keyparts: Vec<&str>) -> Result<()
         master_key
     };
     let (_, new_master_key) = util::with_new_passphrase("Your new master passphrase", |_master_key, _now| { Ok(()) }, Some(identity.created().clone()))?;
-    let transactions_reencrypted = transactions.reencrypt(&master_key, &new_master_key)
+    let transactions_reencrypted = transactions.reencrypt(&mut rng, &master_key, &new_master_key)
         .map_err(|e| anyhow!("Password change failed: {}", e))?;
     // make sure it actually works before we save it...
     transactions_reencrypted.test_master_key(&new_master_key)

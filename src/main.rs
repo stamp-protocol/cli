@@ -12,6 +12,7 @@ use clap::{
     value_parser,
 };
 use stamp_core::{
+    crypto::base::rng,
     identity::{
         IdentityID,
         claim::RelationshipType,
@@ -1098,6 +1099,7 @@ fn run() -> Result<()> {
                     crate::commands::id::post_create(&transactions)?;
                 }
                 Some(("vanity", args)) => {
+                    let mut rng = rng::chacha20();
                     let regex = args.get_one::<String>("regex").map(|x| x.as_str());
                     let contains: Vec<&str> = args.get_many::<String>("contains")
                         .unwrap_or_default()
@@ -1113,7 +1115,7 @@ fn run() -> Result<()> {
                     let (tmp_master_key, transactions, now) = commands::id::create_vanity(regex, contains, prefix)?;
                     crate::commands::id::passphrase_note();
                     let (_, master_key) = util::with_new_passphrase("Your master passphrase", |_master_key, _now| { Ok(()) }, Some(now.clone()))?;
-                    let transactions = transactions.reencrypt(&tmp_master_key, &master_key)
+                    let transactions = transactions.reencrypt(&mut rng, &tmp_master_key, &master_key)
                         .map_err(|err| anyhow!("Failed to create identity: {}", err))?;
                     let (name, email) = crate::commands::id::prompt_name_email()?;
                     let transactions = stamp_aux::id::post_new_personal_id(&master_key, transactions, &hash_with, name, email)
