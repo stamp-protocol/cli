@@ -13,6 +13,6 @@ pub fn save(config: &Config) -> Result<()> {
 }
 
 pub fn hash_algo(_identity_id: Option<&str>) -> HashAlgo {
-    HashAlgo::Blake2b256
+    HashAlgo::Blake3
 }
 
