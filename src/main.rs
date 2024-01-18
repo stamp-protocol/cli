@@ -163,7 +163,7 @@ fn run() -> Result<()> {
                         .arg(Arg::new("prefix")
                             .short('p')
                             .long("prefix")
-                            .help("Vanity prefix, ex: sam-"))
+                            .help("Vanity prefix, ex: jeb-"))
                         .arg(stage_arg())
                         .arg(signwith_arg())
                 )
@@ -521,7 +521,7 @@ fn run() -> Result<()> {
                             .action(ArgAction::SetTrue)
                             .short('b')
                             .long("base64")
-                            .help("If set, output the encrypted message as base64 (which is easier to put in email or a website),"))
+                            .help("If set, output the encrypted message as base64 (which is easier to put in email or a website)."))
                         .arg(id_arg("The ID of the identity we are creating the stamp request for. This overrides the configured default identity."))
                         .arg(Arg::new("CLAIM")
                             .index(1)
@@ -573,7 +573,7 @@ fn run() -> Result<()> {
                             .action(ArgAction::SetTrue)
                             .short('b')
                             .long("base64")
-                            .help("If set, output the stamp transaction as base64 (which is easier to put in email or a website),"))
+                            .help("If set, output the stamp transaction as base64 (which is easier to put in email or a website)."))
                 )
                 .subcommand(
                     Command::new("accept")
@@ -818,7 +818,7 @@ fn run() -> Result<()> {
                             .action(ArgAction::SetTrue)
                             .short('b')
                             .long("base64")
-                            .help("If set, output the encrypted message as base64 (which is easier to put in email or a website),"))
+                            .help("If set, output the encrypted message as base64 (which is easier to put in email or a website)."))
                         .arg(id_arg("The ID of the identity we want to send from. This overrides the configured default identity."))
                         .arg(Arg::new("SEARCH")
                             .index(1)
@@ -844,7 +844,7 @@ fn run() -> Result<()> {
                             .action(ArgAction::SetTrue)
                             .short('b')
                             .long("base64")
-                            .help("If set, output the encrypted message as base64 (which is easier to put in email or a website),"))
+                            .help("If set, output the encrypted message as base64 (which is easier to put in email or a website)."))
                         .arg(Arg::new("SEARCH")
                             .index(1)
                             .required(true)
@@ -899,7 +899,7 @@ fn run() -> Result<()> {
                             .action(ArgAction::SetTrue)
                             .short('b')
                             .long("base64")
-                            .help("If set, output the signature as base64 (which is easier to put in email or a website),"))
+                            .help("If set, output the signature as base64 (which is easier to put in email or a website)."))
                         .arg(id_arg("The ID of the identity we want to sign from. This overrides the configured default identity."))
                         .arg(Arg::new("MESSAGE")
                             .index(1)
@@ -984,18 +984,18 @@ fn run() -> Result<()> {
         .subcommand(
             Command::new("agent")
                 .about("Creates a long-running agent that handles local application key access, provides private syncing for your identity, and participates in StampNet.")
+                .arg(Arg::new("bind")
+                    .short('b')
+                    .long("bind")
+                    .value_name("/ip4/0.0.0.0/tcp/5757")
+                    .default_value("/ip4/0.0.0.0/tcp/5757")
+                    .value_parser(MultiaddrParser::new())
+                    .help("The address/port to listen on for StampNet and private syncing. Only used if --sync-token or --enable-net are given."))
                 .arg(Arg::new("sync-token")
                     .short('t')
                     .long("sync-token")
                     .value_parser(SyncTokenParser::new())
                     .help("The sync token you got from running `stamp keychain sync-token`. A blind token can be used (run `stamp keychain sync-token -b` on the originating device) if running on an untrusted device. If ommitted, private syncing will be disabled."))
-                .arg(Arg::new("sync-bind")
-                    .short('b')
-                    .long("sync-bind")
-                    .value_name("/ip4/0.0.0.0/tcp/5757")
-                    .default_value("/ip4/0.0.0.0/tcp/5757")
-                    .value_parser(MultiaddrParser::new())
-                    .help("The address/port to listen on for private syncing. Only used if --sync-token is specified."))
                 .arg(Arg::new("sync-join")
                     .action(ArgAction::Append)
                     .short('j')
@@ -1015,21 +1015,18 @@ fn run() -> Result<()> {
                     .default_value("3600")
                     .value_parser(value_parser!(u64))
                     .help("This security parameter tells the agent to lock its database and throw away the key after N number of seconds of inactivity, requiring you to unlock with the master passphrase again."))
-                .arg(Arg::new("net-bind")
-                    .action(ArgAction::Append)
+                .arg(Arg::new("net")
+                    .action(ArgAction::SetTrue)
                     .short('n')
-                    .long("net-bind")
-                    .value_parser(MultiaddrParser::new())
-                    .value_name("/ip4/0.0.0.0/tcp/5758")
-                    .default_value("/ip4/0.0.0.0/tcp/5758")
-                    .help("The address/port to listen on to run as a StampNet node."))
+                    .long("net")
+                    .help("Enables participation in StampNet."))
                 .arg(Arg::new("net-join")
                     .action(ArgAction::Append)
                     .short('s')
                     .long("net-join")
                     .value_parser(MultiaddrParser::new())
                     .value_name("/dns/boot1.stampnet.org/tcp/5758")
-                    .help("Join an existing StampNet node. Can be specified multiple times."))
+                    .help("Join an existing StampNet node. Can be specified multiple times. If ommitted and --net is specified, we join the default bootstrap servers."))
         )
         .subcommand(
             Command::new("dag")
@@ -1751,32 +1748,31 @@ fn run() -> Result<()> {
             }
         }
         Some(("agent", args)) => {
+            let bind = args.get_one::<Multiaddr>("bind")
+                .expect("Missing `bind` argument.")
+                .clone();
             let sync_token = args.get_one::<SyncToken>("sync-token")
                 .map(|x| x.clone());
-            let sync_bind = args.get_one::<Multiaddr>("sync-bind")
-                .expect("Missing `sync-bind` argument.")
-                .clone();
             let sync_join = args.get_many::<Multiaddr>("sync-join")
                 .into_iter()
                 .flatten()
                 .map(|x| x.clone())
                 .collect::<Vec<_>>();
             let agent_port = args.get_one::<u32>("agent-port")
-                .expect("Missing `net-bind` argument.")
+                .expect("Missing `agent-port` argument.")
                 .clone();
             let agent_lock_after = args.get_one::<u64>("agent-lock-after")
-                .expect("Missing `net-bind` argument.")
+                .expect("Missing `agent-lock-after` argument.")
                 .clone();
-            let net_bind = args.get_one::<Multiaddr>("net-bind")
-                .expect("Missing `net-bind` argument.")
-                .clone();
+            let net = args.get_flag("net");
             let net_join = args.get_many::<Multiaddr>("net-join")
                 .into_iter()
                 .flatten()
                 .map(|x| x.clone())
                 .collect::<Vec<_>>();
 
-            commands::agent::run(sync_token, sync_bind, sync_join, agent_port, agent_lock_after, net_bind, net_join)?;
+            unimplemented!();
+            //commands::agent::run(bind, sync_token, sync_join, agent_port, agent_lock_after, net_bind, net_join)?;
         }
         _ => unreachable!("Unknown command")
     }
