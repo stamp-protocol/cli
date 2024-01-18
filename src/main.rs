@@ -238,6 +238,22 @@ fn run() -> Result<()> {
                             .index(1)
                             .help("An identity ID, name, or email to search for when deleting."))
                 )
+                .subcommand(
+                    Command::new("fingerprint")
+                        .about("Generate a fingerprint of an identity. This can be used to quickly distinguish identities visually even if they have similar ids.")
+                        .alias("avatar")
+                        .arg(id_arg("The ID of the identity we want to generate a fingerprint for. This overrides the configured default identity."))
+                        .arg(Arg::new("format")
+                            .short('f')
+                            .long("format")
+                            .value_parser(clap::builder::PossibleValuesParser::new(["term", "svg"]))
+                            .default_value("term")
+                            .help("The format you want the fingerprint in. \"shell\" will output in terminal 256 bit color, \"svg\" outputs a color SVG."))
+                        .arg(Arg::new("output")
+                            .short('o')
+                            .long("output")
+                            .help("The output file to write to. You can leave blank or use the value '-' to signify STDOUT."))
+                )
         )
         .subcommand(
             Command::new("claim")
@@ -1168,6 +1184,22 @@ fn run() -> Result<()> {
                         .ok_or(anyhow!("Must specify a search value"))?;
                     let identity = commands::id::view(search)?;
                     println!("{}", identity);
+                }
+                Some(("fingerprint", args)) => {
+                    let id = id_val(args)?;
+                    let format = args.get_one::<String>("format")
+                        .map(|x| x.as_str())
+                        .unwrap_or("term");
+                    let output = args.get_one::<String>("output")
+                        .map(|x| x.as_str())
+                        .unwrap_or("-");
+
+                    let fp_format = match format {
+                        "svg" => commands::id::FingerprintFormat::Svg,
+                        _ => commands::id::FingerprintFormat::Term,
+                    };
+                    let fingerprint = commands::id::fingerprint(&id, fp_format)?;
+                    util::write_file(output, fingerprint.as_bytes())?;
                 }
                 _ => unreachable!("Unknown command")
             }
