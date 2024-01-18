@@ -28,3 +28,6 @@ tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 toml = "0.5"
 
+[features]
+yaml-export = ["stamp-core/yaml-export"]
+

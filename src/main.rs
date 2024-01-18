@@ -1045,6 +1045,19 @@ fn run() -> Result<()> {
                         .about("Load an identity from the database and save it again. Useful for dealing with database changes.")
                         .arg(id_arg("The ID of the identity we want to re-save. This must be specified."))
                 )
+                .subcommand(
+                    Command::new("export")
+                        .about("Export an identity *with private data* in YAML format. This is very much frowned upon, except to allow identities to survive binary serialization changes. It hopefully goes without saying that the output should not be shared with anybody. Use `stamp debug import` to import.")
+                        .arg(id_arg("The ID of the identity we want to export. This must be specified."))
+                )
+                .subcommand(
+                    Command::new("import")
+                        .about("Import an identity exported via `stamp debug export`. This will *overwrite* the identity if it exists already.")
+                        .arg(Arg::new("EXPORT-PATH")
+                            .index(1)
+                            .required(true)
+                            .help("The path to the file exported from `stamp debug export`. Use the value '-' to signify STDIN."))
+                )
         );
     let args = app.get_matches();
     match args.subcommand() {
@@ -1650,6 +1663,20 @@ fn run() -> Result<()> {
                         .map(|x| x.as_str())
                         .ok_or(anyhow!("Must specify an ID"))?;
                     commands::debug::resave(id)?;
+                }
+                Some(("export", args)) => {
+                    // no default here, debug commands should be explicit
+                    let id = args.get_one::<String>("identity")
+                        .map(|x| x.as_str())
+                        .ok_or(anyhow!("Must specify an ID"))?;
+                    commands::debug::export(id)?;
+                }
+                Some(("import", args)) => {
+                    // no default here, debug commands should be explicit
+                    let input = args.get_one::<String>("EXPORT-PATH")
+                        .map(|x| x.as_str())
+                        .unwrap_or("-");
+                    commands::debug::import(input)?;
                 }
                 _ => unreachable!("Unknown command")
             }
