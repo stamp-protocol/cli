@@ -9,14 +9,16 @@ use stamp_aux::{
     db::stage_transaction,
 };
 use stamp_core::{
-    crypto::base::KeyID,
+    crypto::{
+        base::KeyID,
+        private::MaybePrivate,
+    },
     dag::{TransactionBody, Transaction, Transactions},
     identity::{
         IdentityID,
         claim::ClaimSpec,
         keychain::Key,
     },
-    private::MaybePrivate,
     util::{SerdeBinary, base64_encode},
 };
 use std::convert::{TryFrom, From};

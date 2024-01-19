@@ -13,13 +13,13 @@ use stamp_core::{
     crypto::{
         self,
         base::{KeyID, SecretKey, rng},
+        private::PrivateWithHmac,
     },
     identity::{
         Identity,
         IdentityID,
         keychain::{AdminKey, AdminKeypair, ExtendKeypair, Key, RevocationReason, Subkey},
     },
-    private::PrivateWithHmac,
     util::{Timestamp, Public, base64_encode, base64_decode},
 };
 use std::convert::{TryFrom, TryInto};

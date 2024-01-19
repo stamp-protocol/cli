@@ -2005,6 +2005,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "jzon"
+version = "0.12.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17ab85f84ca42c5ec520e6f3c9966ba1fd62909ce260f8837e248857d2560509"
+
+[[package]]
 name = "konst"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3418,9 +3424,9 @@ dependencies = [
 
 [[package]]
 name = "rasn"
-version = "0.11.1"
+version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93ab7bed5d64da6307bb533839fb2f17d00ae7024e6579520591ad5011387590"
+checksum = "4ff0082badbd131c9f6d0b7d7b52c0fb042ebbce6093a486cc4a3dc9d07db588"
 dependencies = [
  "arrayvec",
  "bitvec",
@@ -3428,6 +3434,7 @@ dependencies = [
  "bytes",
  "chrono",
  "either",
+ "jzon",
  "konst",
  "nom",
  "num-bigint",
@@ -3440,9 +3447,9 @@ dependencies = [
 
 [[package]]
 name = "rasn-derive"
-version = "0.11.1"
+version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23e4031f809158c6c6f762b09231780f874003cc546b827c5ad34bc8bb3e3761"
+checksum = "234fb06870377d972697e0afa59b4bb89fec1443993c1dfdcfff30496bf93d02"
 dependencies = [
  "either",
  "itertools",
@@ -4066,7 +4073,6 @@ dependencies = [
  "blake2",
  "chrono",
  "dirs",
- "hkdf",
  "regex",
  "resolve",
  "rusqlite",

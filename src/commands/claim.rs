@@ -8,7 +8,10 @@ use crate::{
 use prettytable::Table;
 use stamp_aux;
 use stamp_core::{
-    crypto::base::{SecretKey, rng},
+    crypto::{
+        base::{SecretKey, rng},
+        private::MaybePrivate,
+    },
     dag::{TransactionID, Transactions},
     identity::{
         Identity,
@@ -16,7 +19,6 @@ use stamp_core::{
         claim::{Claim, ClaimID, ClaimSpec, RelationshipType},
         stamp::{Stamp},
     },
-    private::MaybePrivate,
     rasn::{Encode, Decode},
     util::{Date, Url, Public, BinaryVec, SerText, Timestamp},
 };
