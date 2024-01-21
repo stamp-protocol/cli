@@ -21,7 +21,6 @@ serde_derive = "1.0"
 sharks = "0.4"
 stamp-aux = { path = "../aux" }
 stamp-core = { path = "../core" }
-stamp-net = { path = "../net" }
 textwrap = { version = "0.13", features = ["terminal_size"] }
 tokio = { version = "1.34", features = ["io-std", "rt"] }
 tracing = { version = "0.1", features = ["log"] }

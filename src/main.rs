@@ -18,11 +18,12 @@ use stamp_core::{
         claim::RelationshipType,
     },
 };
-use stamp_net::{Multiaddr};
+//use stamp_net::{Multiaddr};
 use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::str::FromStr;
 
+/*
 #[derive(Debug, Clone)]
 struct MultiaddrParser {}
 impl MultiaddrParser {
@@ -37,6 +38,7 @@ impl TypedValueParser for MultiaddrParser {
         Self::Value::from_str(&converted).map_err(|e| clap::Error::raw(clap::error::ErrorKind::InvalidValue, e))
     }
 }
+*/
 
 /// A private syncing token. Has the channel value (always required) and an
 /// optional shared key, which can be used to decrypt the resulting messages.
@@ -981,6 +983,7 @@ fn run() -> Result<()> {
                             .help("The transaction ID you wish to apply."))
                 )
         )
+        /*
         .subcommand(
             Command::new("agent")
                 .about("Creates a long-running agent that handles local application key access, provides private syncing for your identity, and participates in StampNet.")
@@ -1028,6 +1031,7 @@ fn run() -> Result<()> {
                     .value_name("/dns/boot1.stampnet.org/tcp/5758")
                     .help("Join an existing StampNet node. Can be specified multiple times. If ommitted and --net is specified, we join the default bootstrap servers."))
         )
+        */
         .subcommand(
             Command::new("dag")
                 .about("Interact with an identity's DAG directly.")
@@ -1747,6 +1751,7 @@ fn run() -> Result<()> {
                 _ => unreachable!("Unknown command")
             }
         }
+        /*
         Some(("agent", args)) => {
             let bind = args.get_one::<Multiaddr>("bind")
                 .expect("Missing `bind` argument.")
@@ -1774,6 +1779,7 @@ fn run() -> Result<()> {
             unimplemented!();
             //commands::agent::run(bind, sync_token, sync_join, agent_port, agent_lock_after, net_bind, net_join)?;
         }
+        */
         _ => unreachable!("Unknown command")
     }
     Ok(())

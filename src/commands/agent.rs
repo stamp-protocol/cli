@@ -6,13 +6,12 @@ use stamp_aux::util::UIMessage;
 use stamp_core::{
     crypto::base::SecretKey,
 };
-use stamp_net::Multiaddr;
+//use stamp_net::Multiaddr;
 use tokio::{task, sync::mpsc as channel};
 use tracing::{warn};
 
+/*
 pub fn run(bind: Multiaddr, sync_token: Option<SyncToken>, sync_join: Vec<Multiaddr>, agent_port: u32, agent_lock_after: u64, net: bool, net_join: Vec<Multiaddr>) -> Result<()> {
-    Ok(())
-    /*
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
@@ -66,5 +65,5 @@ pub fn run(bind: Multiaddr, sync_token: Option<SyncToken>, sync_join: Vec<Multia
             }
             Ok(())
         })
-    */
 }
+*/
