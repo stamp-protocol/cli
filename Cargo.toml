@@ -30,3 +30,6 @@ toml = "0.5"
 [features]
 yaml-export = ["stamp-core/yaml-export"]
 
+[profile.release]
+strip = "symbols"
+
