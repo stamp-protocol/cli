@@ -1,6 +1,9 @@
 # Stamp CLI changelog
 
-The ![fireeee](https://stamp-protocol.github.io/assets/images/fireanim.gif)hottest![fireeee](https://stamp-protocol.github.io/assets/images/fireanim.gif)
+The
+<img style="display: inline-block; width: 0.75rem; height: 1rem; vertical-align: middle;" src="https://stamp-protocol.github.io/assets/images/fireanim.gif" alt="fireee">
+hottest
+<img style="display: inline-block; width: 0.75rem; height: 1rem; vertical-align: middle;" src="https://stamp-protocol.github.io/assets/images/fireanim.gif" alt="fireee">
 Stamp CLI changes *allowed by law*.
 
 ## v0.1.1 // 2024-02-08
