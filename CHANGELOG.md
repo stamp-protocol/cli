@@ -1,6 +1,7 @@
 # Stamp CLI changelog
 
-The *hottest* Stamp CLI changes *allowed by law*.
+The ![fireeee](https://stamp-protocol.github.io/assets/images/fireanim.gif)hottest![fireeee](https://stamp-protocol.github.io/assets/images/fireanim.gif)
+Stamp CLI changes *allowed by law*.
 
 ## v0.1.1 // 2024-02-08
 
