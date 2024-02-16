@@ -33,3 +33,7 @@ are wonderfully functional, including id generation, claims, stamping.
   keys and stuff. Huge WIP.
 - Trust calculations (ie, determining trust via networks of stamps in downloaded identities).
 
+### Bugs
+
+- None, it's perfect in every way.
+
