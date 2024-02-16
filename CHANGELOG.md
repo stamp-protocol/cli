@@ -27,4 +27,5 @@ are wonderfully functional, including id generation, claims, stamping.
   engage the policy system to create much more official signatures.
 - Agent. Will eventually run a p2p StampNet node, as well as act as the interface for other apps to request signatures or
   keys and stuff. Huge WIP.
+- Trust calculations (ie, determining trust via networks of stamps in downloaded identities).
 
