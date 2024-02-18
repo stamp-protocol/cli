@@ -6,6 +6,20 @@ hottest
 <img style="display: inline-block; width: 0.75rem; height: 1rem; vertical-align: middle;" src="https://stamp-protocol.github.io/assets/images/fireanim.gif" alt="fireee">
 Stamp CLI changes *allowed by law*.
 
+## v0.1.2 // 2024-02-18
+
+New claim type, fixing claim listing bug.
+
+### Features
+
+- Phone number claims. These cannot be instantly verified, unfortunately, because they require telecommunications
+infrastructure that most users don't own outright.
+
+### Bugfixes
+
+- When doing `stamp claim list -p --id s0f` it would take `s0f` as the literal identity id, which
+caused parsing errors in the core. This has been corrected.
+
 ## v0.1.1 // 2024-02-08
 
 Initial release (how do I do confetti emojis in md??)! Although unfinished, many features exist and
@@ -33,7 +47,7 @@ are wonderfully functional, including id generation, claims, stamping.
   keys and stuff. Huge WIP.
 - Trust calculations (ie, determining trust via networks of stamps in downloaded identities).
 
-### Bugs
+### Bugfixes
 
 - None, it's perfect in every way.
 

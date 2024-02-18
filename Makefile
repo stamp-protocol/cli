@@ -1,4 +1,4 @@
-.PHONY: all clean release doc build run test test-panic test-st macros osx windows
+.PHONY: all clean release doc build run test test-panic test-st macros osx windows target/windows/stamp-cli.exe target/osx/stamp-cli
 
 # non-versioned include
 VARS ?= vars.mk
