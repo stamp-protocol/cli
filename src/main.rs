@@ -357,6 +357,15 @@ fn run() -> Result<()> {
                                 .arg(claim_name_arg())
                         )
                         .subcommand(
+                            Command::new("phone")
+                                .about("Claim a phone number. (Hint: you might want the -p flag with this unless you like phone calls about your car's extended warranty)")
+                                .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
+                                .arg(stage_arg())
+                                .arg(signwith_arg())
+                                .arg(claim_private_arg())
+                                .arg(claim_name_arg())
+                        )
+                        .subcommand(
                             Command::new("relation")
                                 .about("Claim that you are in a relationship with another identity.")
                                 .arg(id_arg("The ID of the identity we want to add a claim to. This overrides the configured default identity."))
@@ -1280,6 +1289,9 @@ fn run() -> Result<()> {
                         }
                         Some(("address", args)) => {
                             easy_claim! { args, new_address, "Enter your address" }
+                        }
+                        Some(("phone", args)) => {
+                            easy_claim! { args, new_phone, "Enter your phone number" }
                         }
                         Some(("relation", args)) => {
                             let (id, private, name, stage, sign_with) = claim_args!(args);

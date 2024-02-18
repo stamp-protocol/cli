@@ -149,6 +149,10 @@ pub fn view(id: &str, claim_id: &str, output: &str) -> Result<()> {
             let val = unwrap_maybe(maybe, masterkey_fn)?;
             Vec::from(val.as_bytes())
         }
+        ClaimSpec::PhoneNumber(maybe) => {
+            let val = unwrap_maybe(maybe, masterkey_fn)?;
+            Vec::from(val.as_bytes())
+        }
         _ => Err(anyhow!("Viewing is not implemented for this claim type"))?,
     };
     util::write_file(output, output_bytes.as_slice())?;
@@ -159,7 +163,7 @@ pub fn list(id: &str, private: bool, verbose: bool) -> Result<()> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let master_key_maybe = if private {
-        let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
+        let master_key = util::passphrase_prompt(format!("Your master passphrase for identity {}", IdentityID::short(&format!("{}", identity.id()))), identity.created())?;
         identity.test_master_key(&master_key)
             .map_err(|e| anyhow!("Incorrect passphrase: {:?}", e))?;
         Some(master_key)
@@ -292,6 +296,7 @@ pub fn print_claims_table(claims: &Vec<(Claim, Timestamp)>, master_key_maybe: Op
             ClaimSpec::Domain(domain) => ("domain", extract_str!(domain)),
             ClaimSpec::Url(url) => ("url", extract_str!(url, |x: Url| String::from(x))),
             ClaimSpec::Address(address) => ("address", extract_str!(address)),
+            ClaimSpec::PhoneNumber(number) => ("phone #", extract_str!(number)),
             ClaimSpec::Relation(relation) => {
                 let rel_str = match relation {
                     MaybePrivate::Public(relationship) => {
