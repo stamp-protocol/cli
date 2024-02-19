@@ -42,8 +42,6 @@ pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option
     let claim_id_str = id_str!(claim.id())?;
     util::print_wrapped(&format!("You are about to stamp the claim {} made by the identity {}.\n", ClaimID::short(&claim_id_str), IdentityID::short(&their_id_str)));
     util::print_wrapped("Effectively, you are vouching for them and that their claim is true. You can specify your confidence in the claim:\n");
-    util::print_wrapped("    none\n");
-    util::print_wrapped_indent("you are not verifying the claim at all, but wish to stamp it anyway\n", "        ");
     util::print_wrapped("    low\n");
     util::print_wrapped_indent("you have done a quick and dirty verification of the claim\n", "        ");
     util::print_wrapped("    medium\n");
@@ -54,7 +52,6 @@ pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option
     util::print_wrapped_indent("you have known this person for the last 50 years and can be absolutely certain that the claim they are making is correct and they are not a hologram or an android imposter\n", "        ");
     let confidence_val = util::value_prompt("\nHow confident are you in this claim?")?;
     let confidence = match confidence_val.as_str() {
-        "none" => Confidence::None,
         "low" => Confidence::Low,
         "medium" => Confidence::Medium,
         "high" => Confidence::High,
@@ -255,7 +252,6 @@ pub fn print_stamps_table(stamps: &Vec<&Stamp>, verbose: bool, show_revoked: boo
             .unwrap_or_else(|| String::from("-"));
         let created = stamp.created().local().format("%b %d, %Y").to_string();
         let confidence = match stamp.entry().confidence() {
-            Confidence::None => "none",
             Confidence::Low => "low",
             Confidence::Medium => "medium",
             Confidence::High => "high",
