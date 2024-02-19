@@ -8,12 +8,14 @@ Stamp CLI changes *allowed by law*.
 
 ## v0.1.2 // 2024-02-18
 
-New claim type, fixing claim listing bug.
+New claim type, fixing claim listing bug, remove Confidence::None.
 
 ### Features
 
 - Phone number claims. These cannot be instantly verified, unfortunately, because they require telecommunications
 infrastructure that most users don't own outright.
+- Removing `Confidence::None` because it seems fairly useless. Don't know what I was thinking. If there's no confidence,
+don't make a stamp.
 
 ### Bugfixes
 
