@@ -66,10 +66,11 @@ impl From<&Subkey> for PrintableKey {
 
 pub fn new(id: &str, ty: &str, name: &str, desc: Option<&str>, stage: bool, sign_with: Option<&str>) -> Result<()> {
     let mut rng = rng::chacha20();
-    let hash_with = config::hash_algo(Some(&id));
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
-    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
+    let id_str = id_str!(identity.id())?;
+    let hash_with = config::hash_algo(Some(&id_str));
+    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     identity.test_master_key(&master_key)
         .map_err(|e| anyhow!("Incorrect passphrase: {:?}", e))?;
     let transaction = match ty {
@@ -272,6 +273,7 @@ pub fn passwd(id: &str, keyfile: Option<&str>, keyparts: Vec<&str>) -> Result<()
     let mut rng = rng::chacha20();
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
+    let id_str = id_str!(identity.id())?;
     fn master_key_from_base64_shamir_parts(parts: &Vec<&str>) -> Result<SecretKey> {
         let keyfile_parts = parts.iter()
             .map(|part| {
@@ -321,7 +323,7 @@ pub fn passwd(id: &str, keyfile: Option<&str>, keyparts: Vec<&str>) -> Result<()
         util::print_wrapped("Successfully recovered master key from key parts!\n");
         master_key
     } else {
-        let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
+        let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
         identity.test_master_key(&master_key)
             .map_err(|e| anyhow!("Incorrect passphrase: {}", e))?;
         master_key
@@ -388,7 +390,8 @@ pub fn keyfile(id: &str, shamir: &str, output: &str) -> Result<()> {
     }
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
-    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(id)), identity.created())?;
+    let id_str = id_str!(identity.id())?;
+    let master_key = util::passphrase_prompt(&format!("Your current master passphrase for identity {}", IdentityID::short(&id_str)), identity.created())?;
     transactions.test_master_key(&master_key)
         .map_err(|e| anyhow!("Incorrect passphrase: {}", e))?;
     let sharks = sharks::Sharks(min_shares);
