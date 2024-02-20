@@ -80,53 +80,53 @@ pub fn sign_subkey(id_sign: &str, key_search_sign: Option<&str>, input: &str, ou
 
 pub fn verify(input_signature: &str, input_message: Option<&str>) -> Result<()> {
     let sig_bytes = util::read_file(input_signature)?;
-    enum IdOrSub {
-        Id(Transaction),
-        Sub(Signature),
+    enum PolicyOrSub {
+        Policy(Transaction),
+        Subkey(Signature),
     }
     let signature = Transaction::deserialize_binary(sig_bytes.as_slice())
         .or_else(|_| {
             Transaction::deserialize_binary(&base64_decode(sig_bytes.as_slice())?)
         })
-        .map(|x| IdOrSub::Id(x))
+        .map(|x| PolicyOrSub::Policy(x))
         .or_else(|_| {
             Signature::deserialize_binary(sig_bytes.as_slice())
                 .or_else(|_| {
                     Signature::deserialize_binary(&base64_decode(sig_bytes.as_slice())?)
                 })
-            .map(|x| IdOrSub::Sub(x))
+            .map(|x| PolicyOrSub::Subkey(x))
         })
         .map_err(|e| anyhow!("Error reading signature: {}", e))?;
     let res = match &signature {
-        IdOrSub::Id(transaction) => {
+        PolicyOrSub::Policy(transaction) => {
             let input_message = input_message
-                .ok_or(anyhow!("A MESSAGE argument must be give when verifying an identity signature."))?;
+                .ok_or(anyhow!("A MESSAGE argument must be give when verifying an policy signature."))?;
             let message_bytes = util::read_file(&input_message)?;
             match transaction.entry().body() {
                 TransactionBody::SignV1 { creator, body_hash } => {
                     let id_str = format!("{}", creator);
                     let creator_transactions = db::load_identity(&creator)?
-                        .ok_or(anyhow!("Identity {} not found. Have you imported it?", IdentityID::short(&id_str)))?;
+                        .ok_or(anyhow!("Identity {} not found. Have you imported it?", id_str))?;
                     let creator_identity = util::build_identity(&creator_transactions)?;
                     // TODO: verify against past version of creator_transactions if verification
                     // fails and we have a non-empty previous_transactions. see issue #41
                     transaction.verify(Some(&creator_identity))
-                        .map_err(|e| anyhow!("Identity signature invalid: {}", e))?;
+                        .map_err(|e| anyhow!("Policy signature invalid: {}", e))?;
                     match body_hash {
                         Hash::Blake3(..) => {
                             let compare = Hash::new_blake3(message_bytes.as_slice())?;
                             if &compare == body_hash {
                                 Ok(())
                             } else {
-                                Err(anyhow!("Identity signature hash ({}) does not match message hash ({})", body_hash, compare))
+                                Err(anyhow!("Policy signature hash ({}) does not match message hash ({})", body_hash, compare))
                             }
                         }
                     }
                 }
-                _ => Err(anyhow!("Invalid identity signature"))?,
+                _ => Err(anyhow!("Invalid policy signature: invalid transaction type (expected `Sign` transaction)"))?,
             }
         }
-        IdOrSub::Sub(signature) => {
+        PolicyOrSub::Subkey(signature) => {
             let sig = match signature {
                 Signature::Detached { sig } => sig,
                 Signature::Attached { sig, .. } => sig,
@@ -135,7 +135,7 @@ pub fn verify(input_signature: &str, input_message: Option<&str>) -> Result<()> 
             let key_id = sig.signed_by_key();
             let id_str = id_str!(identity_id)?;
             let transactions = db::load_identity(identity_id)?
-                .ok_or(anyhow!("Identity {} not found. Have you imported it?", IdentityID::short(&id_str)))?;
+                .ok_or(anyhow!("Identity {} not found. Have you imported it?", id_str))?;
             let identity = util::build_identity(&transactions)?;
             let subkey = identity.keychain().subkey_by_keyid(&key_id)
                 .ok_or(anyhow!("Signing key {} not found in identity {}", key_id.as_string(), IdentityID::short(&id_str)))?;
@@ -156,12 +156,24 @@ pub fn verify(input_signature: &str, input_message: Option<&str>) -> Result<()> 
     };
     match res {
         Ok(..) => {
-            let sigtype = match signature {
-                IdOrSub::Id(..) => "identity",
-                IdOrSub::Sub(..) => "subkey",
-            };
             let green = dialoguer::console::Style::new().green();
-            println!("The {} signature is {}!", sigtype, green.apply_to("valid"));
+            match signature {
+                PolicyOrSub::Policy(trans) => {
+                    let identity_id = match trans.entry().body() {
+                        TransactionBody::SignV1 { creator, .. } => creator,
+                        _ => Err(anyhow!("Problem pulling signature `creator` field from policy signature. Perhaps it is not a Sign transaction."))?,
+                    };
+                    let id_str_creator = id_str!(identity_id)?;
+                    println!("This signature is {}! It is a policy signature made by the identity {}.", green.apply_to("valid"), id_str_creator);
+                }
+                PolicyOrSub::Subkey(sig) => {
+                    let signed_obj = match sig {
+                        Signature::Detached { sig } => sig,
+                        Signature::Attached { sig, .. } => sig,
+                    };
+                    println!("This signature is {}! It is a subkey signature made by the identity {} with the key {}.", green.apply_to("valid"), signed_obj.signed_by_identity(), signed_obj.signed_by_key());
+                }
+            }
         }
         Err(e) => {
             let red = dialoguer::console::Style::new().red();

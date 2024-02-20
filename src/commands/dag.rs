@@ -206,7 +206,7 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
         }
         TransactionBody::SignV1 { creator, body_hash } => {
             if stage {
-                format!("Identity signature with hash {} created. {}", body_hash, view_staged())
+                format!("Policy signature with hash {} created. {}", body_hash, view_staged())
             } else {
                 // weird, should never get here.
                 return Ok(None);

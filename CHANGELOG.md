@@ -6,6 +6,13 @@ hottest
 <img style="display: inline-block; width: 0.75rem; height: 1rem; vertical-align: middle;" src="https://stamp-protocol.github.io/assets/images/fireanim.gif" alt="fireee">
 Stamp CLI changes *allowed by law*.
 
+## v0.1.4 // TBD
+
+### Features
+
+- Changing signature verification messages to be more clear.
+- Rename "Identity signature" to "Policy signature." I believe it's less ambiguous.
+
 ## v0.1.3 // 2024-02-19
 
 Fixing subkey signatures, adding identity signatures, and updating staged transaction interface.
