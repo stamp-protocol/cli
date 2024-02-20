@@ -632,7 +632,7 @@ fn run() -> Result<()> {
                                 .arg(Arg::new("NAME")
                                     .required(true)
                                     .index(1)
-                                    .help("This key's name. The name is public and allows for organization and referencing the key by a memorable value. Ex: turtl:master-key"))
+                                    .help("This key's name. The name is public and allows for organization and referencing the key by a memorable value. Ex: turtl/master-key"))
                                 .arg(Arg::new("description")
                                     .short('d')
                                     .long("desc")
@@ -891,8 +891,30 @@ fn run() -> Result<()> {
                 .subcommand_required(true)
                 .arg_required_else_help(true)
                 .subcommand(
-                    Command::new("sign")
-                        .about("Sign a message or document with one of your `sign` keys. This signature can only be created with your private signing key, but anybody who has your public key can verify the message is unaltered.")
+                    Command::new("id")
+                        .about("Create an identity signature. This type of signature is a transaction validated by the policy system, meaning the correct admin key signatures need to be present for it to be considered valid. Use this for creating official signatures.")
+                        .alias("new")
+                        .arg(id_arg("The ID of the identity we want to sign from. This overrides the configured default identity."))
+                        .arg(stage_arg())
+                        .arg(signwith_arg())
+                        .arg(Arg::new("output")
+                            .short('o')
+                            .long("output")
+                            .help("The output file to write the signature to. You can leave blank or use the value '-' to signify STDOUT."))
+                        .arg(Arg::new("base64")
+                            .action(ArgAction::SetTrue)
+                            .short('b')
+                            .long("base64")
+                            .help("If set, output the signature as base64 (which is easier to put in email or a website)."))
+                        .arg(Arg::new("MESSAGE")
+                            .index(1)
+                            .required(false)
+                            .help("The input file to read the plaintext message from. You can leave blank or use the value '-' to signify STDIN."))
+                )
+                .subcommand(
+                    Command::new("subkey")
+                        .about("Sign a message or document with one of your `sign` subkeys. This type of signature carries less weight than an `id` signature and only proves you have access to one of the identity's subkeys.")
+                        .alias("sub")
                         .arg(Arg::new("key-sign")
                             .short('k')
                             .long("key-sign")
@@ -919,11 +941,11 @@ fn run() -> Result<()> {
                 )
                 .subcommand(
                     Command::new("verify")
-                        .about("Verify a signature using the signing identity's public key. This requires having the signing identity imported.")
+                        .about("Verify a signature. This can verify both identity and subkey signatures. This requires having the signing identity imported.")
                         .arg(Arg::new("SIGNATURE")
                             .index(1)
                             .required(true)
-                            .help("The input file to read the signature from. If the signature is deattached, you will also need to spcify the MESSAGE argument. You can leave blank or use the value '-' to signify STDIN."))
+                            .help("The input file to read the signature from. If the signature is deattached, you will also need to specify the MESSAGE argument. You can leave blank or use the value '-' to signify STDIN."))
                         .arg(Arg::new("MESSAGE")
                             .index(2)
                             .required(false)
@@ -962,6 +984,33 @@ fn run() -> Result<()> {
                             .index(1)
                             .required(true)
                             .help("The transaction ID you wish to view."))
+                )
+                .subcommand(
+                    Command::new("export")
+                        .about("Export a staged transaction (usually so it can be sent to someone else who needs to sign it). If this transaction contains private data, you'll be prompted to enter your master passphrase then enter a new passphrase to re-encrypt the transaction.")
+                        .arg(Arg::new("output")
+                            .short('o')
+                            .long("output")
+                            .help("The output file to write the transaction to. You can leave blank or use the value '-' to signify STDOUT."))
+                        .arg(Arg::new("base64")
+                            .action(ArgAction::SetTrue)
+                            .short('b')
+                            .long("base64")
+                            .help("If set, output the staged transaction as base64 (which is easier to put in email or chat)."))
+                        .arg(Arg::new("TXID")
+                            .index(1)
+                            .required(true)
+                            .help("The transaction ID you are exporting."))
+                )
+                .subcommand(
+                    Command::new("import")
+                        .about("Import a staged transaction that was previously exported. This is generally done so you can sign it. If the transaction contains private data, you will be prompted to input the passphrase that was used during export.")
+                        .arg(id_arg("The ID of the identity we want to import the transaction into. This must be specified.")
+                            .required(true))
+                        .arg(Arg::new("TRANSACTION")
+                            .index(1)
+                            .required(true)
+                            .help("The input file to read the exported transaction from. You can leave blank or use the value '-' to signify STDIN."))
                 )
                 .subcommand(
                     Command::new("delete")
@@ -1648,9 +1697,22 @@ fn run() -> Result<()> {
                 _ => unreachable!("Unknown command")
             }
         }
-        Some(("signature", args)) => {
+        Some(("sign", args)) => {
             match args.subcommand() {
-                Some(("sign", args)) => {
+                Some(("id", args)) => {
+                    let sign_id = id_val(args)?;
+                    let stage = args.get_flag("stage");
+                    let sign_with = args.get_one::<String>("admin-key").map(|x| x.as_str());
+                    let output = args.get_one::<String>("output")
+                        .map(|x| x.as_str())
+                        .unwrap_or("-");
+                    let input = args.get_one::<String>("MESSAGE")
+                        .map(|x| x.as_str())
+                        .unwrap_or("-");
+                    let base64 = args.get_flag("base64");
+                    commands::sign::sign_id(&sign_id, input, output, base64, stage, sign_with)?;
+                }
+                Some(("subkey", args)) => {
                     let sign_id = id_val(args)?;
                     let key_sign_search = args.get_one::<String>("key-sign")
                         .map(|x| x.as_str());
@@ -1662,7 +1724,7 @@ fn run() -> Result<()> {
                         .unwrap_or("-");
                     let attached = args.get_flag("attached");
                     let base64 = args.get_flag("base64");
-                    commands::sign::sign(&sign_id, key_sign_search, input, output, attached, base64)?;
+                    commands::sign::sign_subkey(&sign_id, key_sign_search, input, output, attached, base64)?;
                 }
                 Some(("verify", args)) => {
                     let signature = args.get_one::<String>("SIGNATURE")
@@ -1739,6 +1801,24 @@ fn run() -> Result<()> {
                         .map(|x| x.as_str())
                         .ok_or(anyhow!("Must specify a join token"))?;
                     commands::stage::view(txid)?;
+                }
+                Some(("export", args)) => {
+                    let output = args.get_one::<String>("output")
+                        .map(|x| x.as_str())
+                        .unwrap_or("-");
+                    let base64 = args.get_flag("base64");
+                    let txid = args.get_one::<String>("TXID")
+                        .map(|x| x.as_str())
+                        .ok_or(anyhow!("Must specify a join token"))?;
+                    commands::stage::export(txid, output, base64)?;
+                }
+                Some(("import", args)) => {
+                    let id = args.get_one::<String>("identity")
+                        .ok_or(anyhow!("Must specify an ID"))?;
+                    let input = args.get_one::<String>("TRANSACTION")
+                        .map(|x| x.as_str())
+                        .unwrap_or("-");
+                    commands::stage::import(id, input)?;
                 }
                 Some(("delete", args)) => {
                     let txid = args.get_one::<String>("TXID")
