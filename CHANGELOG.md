@@ -6,6 +6,22 @@ hottest
 <img style="display: inline-block; width: 0.75rem; height: 1rem; vertical-align: middle;" src="https://stamp-protocol.github.io/assets/images/fireanim.gif" alt="fireee">
 Stamp CLI changes *allowed by law*.
 
+## v0.1.3 // 2024-02-19
+
+Fixing subkey signatures, adding identity signatures, and updating staged transaction interface.
+
+### Features
+
+- Adding the ability to create `SignV1` signing transactions via the `sign` command. This allows creating
+"official" identity-sanctioned signatures that follow the policy system.
+- Adding `import` and `export` subcommands to the `stage` command. This allows exporting staged transactions
+and moving them between identities for signing. This was mainly to support identity signatures, but is
+also useful in general for staged transactions.
+
+### Bugfixes
+
+- Subkey signatures were broken because I renamed some stuff and never fixed it.
+
 ## v0.1.2 // 2024-02-18
 
 New claim type, fixing claim listing bug, replace `Confidence::None` with `Confidence::Negative`.
