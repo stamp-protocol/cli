@@ -5,9 +5,7 @@ use crate::{
     util,
 };
 use prettytable::Table;
-use stamp_aux::{
-    db::stage_transaction,
-};
+use stamp_aux::db::stage_transaction;
 use stamp_core::{
     crypto::{
         base::KeyID,
@@ -71,7 +69,7 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
             if stage {
                 format!("New key staged. {}", view_staged())
             } else {
-                format!("New admin key added: {}.", admin_key.key().key_id())
+                format!("New admin key added: {}", admin_key.key().key_id())
             }
         }
         TransactionBody::EditAdminKeyV1 { id, .. } => {
@@ -204,6 +202,14 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
                 format!("Key {} deletion staged. {}", id, view_staged())
             } else {
                 format!("Key {} deleted.", id)
+            }
+        }
+        TransactionBody::SignV1 { creator, body_hash } => {
+            if stage {
+                format!("Identity signature with hash {} created. {}", body_hash, view_staged())
+            } else {
+                // weird, should never get here.
+                return Ok(None);
             }
         }
         _ => { return Ok(None) }
