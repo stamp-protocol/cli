@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 pub fn init() -> Result<()> {
     tracing_subscriber::registry()
@@ -7,7 +7,7 @@ pub fn init() -> Result<()> {
         .with(
             EnvFilter::try_from_default_env()
                 .or_else(|_| EnvFilter::try_new("info"))
-                .map_err(|e| anyhow!("Error setting up logging/tracing: {:?}", e))?
+                .map_err(|e| anyhow!("Error setting up logging/tracing: {:?}", e))?,
         )
         .init();
     Ok(())

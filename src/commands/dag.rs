@@ -1,25 +1,14 @@
+use crate::{commands::id, db, util};
 use anyhow::{anyhow, Result};
-use crate::{
-    commands::id,
-    db,
-    util,
-};
 use prettytable::Table;
 use stamp_aux::db::stage_transaction;
 use stamp_core::{
-    crypto::{
-        base::KeyID,
-        private::MaybePrivate,
-    },
-    dag::{TransactionBody, Transaction, Transactions},
-    identity::{
-        IdentityID,
-        claim::ClaimSpec,
-        keychain::Key,
-    },
-    util::{SerdeBinary, base64_encode},
+    crypto::{base::KeyID, private::MaybePrivate},
+    dag::{Transaction, TransactionBody, Transactions},
+    identity::{claim::ClaimSpec, keychain::Key, IdentityID},
+    util::{base64_encode, SerdeBinary},
 };
-use std::convert::{TryFrom, From};
+use std::convert::{From, TryFrom};
 use std::ops::Deref;
 
 pub fn list(id: &str) -> Result<()> {
@@ -32,10 +21,14 @@ pub fn reset(id: &str, txid: &str) -> Result<()> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
-    let trans = transactions.transactions().iter()
+    let trans = transactions
+        .transactions()
+        .iter()
         .find(|x| id_str!(x.id()).map(|id| id.starts_with(txid)).unwrap_or(false))
         .ok_or(anyhow!("Transaction {} not found for identity {}", txid, IdentityID::short(&id_str)))?;
-    let transactions_reset = transactions.clone().reset(trans.id())
+    let transactions_reset = transactions
+        .clone()
+        .reset(trans.id())
         .map_err(|e| anyhow!("Problem resetting transactions: {}", e))?;
     let removed = transactions.transactions().len() - transactions_reset.transactions().len();
     println!("Removed {} transactions from identity {}", removed, IdentityID::short(&id_str));
@@ -47,10 +40,13 @@ pub fn export(id: &str, txid: &str, output: &str, base64: bool) -> Result<()> {
     let transactions = id::try_load_single_identity(id)?;
     let identity = util::build_identity(&transactions)?;
     let id_str = id_str!(identity.id())?;
-    let trans = transactions.transactions().iter()
+    let trans = transactions
+        .transactions()
+        .iter()
         .find(|x| id_str!(x.id()).map(|id| id.starts_with(txid)).unwrap_or(false))
         .ok_or(anyhow!("Transaction {} not found for identity {}", txid, IdentityID::short(&id_str)))?;
-    let serialized = trans.serialize_binary()
+    let serialized = trans
+        .serialize_binary()
         .map_err(|e| anyhow!("Problem serializing transaction: {:?}", e))?;
     if base64 {
         let serialized_str = base64_encode(serialized.as_slice());
@@ -93,9 +89,13 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
                 match spec {
                     ClaimSpec::Domain(MaybePrivate::Public(domain)) => {
                         let claim_id: stamp_core::identity::claim::ClaimID = transaction.id().clone().into();
-                        let claim = identity.claims().iter().find(|c| c.id() == &claim_id)
+                        let claim = identity
+                            .claims()
+                            .iter()
+                            .find(|c| c.id() == &claim_id)
                             .ok_or_else(|| anyhow!("Unable to find created claim"))?;
-                        let instant_values = claim.instant_verify_allowed_values(identity.id())
+                        let instant_values = claim
+                            .instant_verify_allowed_values(identity.id())
                             .map_err(|e| anyhow!("Problem grabbing allowed claim values: {}", e))?;
                         format!(
                             "{}\n  {}\n  {}\n",
@@ -106,9 +106,13 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
                     }
                     ClaimSpec::Url(MaybePrivate::Public(url)) => {
                         let claim_id: stamp_core::identity::claim::ClaimID = transaction.id().clone().into();
-                        let claim = identity.claims().iter().find(|c| c.id() == &claim_id)
+                        let claim = identity
+                            .claims()
+                            .iter()
+                            .find(|c| c.id() == &claim_id)
                             .ok_or_else(|| anyhow!("Unable to find created claim"))?;
-                        let instant_values = claim.instant_verify_allowed_values(identity.id())
+                        let instant_values = claim
+                            .instant_verify_allowed_values(identity.id())
                             .map_err(|e| anyhow!("Problem grabbing allowed claim values: {}", e))?;
                         format!(
                             "{}\n  {}\n  {}\n  {}\n  {}\n",
@@ -120,7 +124,8 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
                         )
                     }
                     _ => {
-                        let name_format = name.as_ref()
+                        let name_format = name
+                            .as_ref()
                             .map(|x| format!(" with name {}", x))
                             .unwrap_or_else(|| String::from(""));
                         format!("Claim{} added.", name_format)
@@ -212,21 +217,20 @@ pub fn post_save(transactions: &Transactions, transaction: &Transaction, stage: 
                 return Ok(None);
             }
         }
-        _ => { return Ok(None) }
+        _ => return Ok(None),
     };
     Ok(Some(msg))
 }
 
 pub fn save_or_stage(transactions: Transactions, transaction: Transaction, stage: bool) -> Result<Transactions> {
-    let identity_id = transactions.identity_id()
-        .ok_or(anyhow!("Unable to generate identity id"))?;
+    let identity_id = transactions.identity_id().ok_or(anyhow!("Unable to generate identity id"))?;
     let trans_clone = transaction.clone();
     let transactions = if stage {
-        stage_transaction(&identity_id, transaction)
-            .map_err(|e| anyhow!("Error staging transaction: {:?}", e))?;
+        stage_transaction(&identity_id, transaction).map_err(|e| anyhow!("Error staging transaction: {:?}", e))?;
         transactions
     } else {
-        let transactions_mod = transactions.push_transaction(transaction)
+        let transactions_mod = transactions
+            .push_transaction(transaction)
             .map_err(|e| anyhow!("Error saving transaction: {:?}", e))?;
         db::save_identity(transactions_mod)?
     };
@@ -271,17 +275,10 @@ pub fn print_transactions_table(transactions: &Vec<Transaction>) {
     table.set_titles(row!["ID", "Type", "Signatures", "Created"]);
     for trans in transactions {
         let ty = transaction_to_string(trans);
-        let id = id_str!(trans.id())
-            .unwrap_or_else(|e| format!("<bad id {:?} -- {:?}>", trans.id(), e));
+        let id = id_str!(trans.id()).unwrap_or_else(|e| format!("<bad id {:?} -- {:?}>", trans.id(), e));
         let created = trans.entry().created().local().format("%b %e, %Y  %H:%M:%S");
         let num_sig = trans.signatures().len();
-        table.add_row(row![
-            id,
-            ty,
-            num_sig,
-            created,
-        ]);
+        table.add_row(row![id, ty, num_sig, created,]);
     }
     table.printstd();
 }
-

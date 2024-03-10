@@ -1,14 +1,10 @@
+use crate::SyncToken;
 use anyhow::{anyhow, Result};
-use crate::{
-    SyncToken,
-};
 use stamp_aux::util::UIMessage;
-use stamp_core::{
-    crypto::base::SecretKey,
-};
+use stamp_core::crypto::base::SecretKey;
 //use stamp_net::Multiaddr;
-use tokio::{task, sync::mpsc as channel};
-use tracing::{warn};
+use tokio::{sync::mpsc as channel, task};
+use tracing::warn;
 
 /*
 pub fn run(bind: Multiaddr, sync_token: Option<SyncToken>, sync_join: Vec<Multiaddr>, agent_port: u32, agent_lock_after: u64, net: bool, net_join: Vec<Multiaddr>) -> Result<()> {

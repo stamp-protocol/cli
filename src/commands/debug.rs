@@ -1,9 +1,5 @@
+use crate::{commands::id, db, util};
 use anyhow::{anyhow, Result};
-use crate::{
-    commands::id,
-    db,
-    util,
-};
 #[cfg(feature = "yaml-export")]
 use stamp_core::{
     dag::Transactions,
@@ -38,8 +34,7 @@ pub fn export(id: &str) -> Result<()> {
 #[cfg(feature = "yaml-export")]
 pub fn import(export_file: &str) -> Result<()> {
     let yaml = util::read_file(export_file)?;
-    let yaml_string = String::from_utf8(yaml)
-        .map_err(|e| anyhow!("Error reading YAML file: {}", e))?;
+    let yaml_string = String::from_utf8(yaml).map_err(|e| anyhow!("Error reading YAML file: {}", e))?;
     let identity: Transactions = text_import(&yaml_string)?;
     let identity_id = identity.identity_id()
         // panics are fine and kewl if you are building debug commands...
@@ -48,4 +43,3 @@ pub fn import(export_file: &str) -> Result<()> {
     println!("Identity {} imported.", identity_id);
     Ok(())
 }
-

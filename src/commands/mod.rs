@@ -7,6 +7,5 @@ pub mod id;
 pub mod keychain;
 pub mod message;
 pub mod sign;
-pub mod stamp;
 pub mod stage;
-
+pub mod stamp;
