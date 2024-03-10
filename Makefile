@@ -1,4 +1,4 @@
-.PHONY: all clean release doc build run test test-panic test-st macros osx windows target/windows/stamp-cli.exe target/osx/stamp-cli
+.PHONY: all clean lint fmt release doc build run test test-panic test-st macros osx windows target/windows/stamp-cli.exe target/osx/stamp-cli
 
 # non-versioned include
 VARS ?= vars.mk
@@ -11,11 +11,46 @@ all: build
 run: build
 	cargo run $(CARGO_BUILD_ARGS)
 
-build:
+build: fmt
 	cargo build $(CARGO_BUILD_ARGS)
+
+fmt:
+	cargo fmt
 
 release: override CARGO_BUILD_ARGS += --release
 release: build
+
+doc:
+	cargo doc $(CARGO_BUILD_ARGS)
+
+test: fmt
+	cargo test $(TEST) $(CARGO_BUILD_ARGS) -- --nocapture
+
+test-release: override CARGO_BUILD_ARGS += --release
+test-release: test
+
+test-panic: override FEATURES += panic-on-error
+test-panic: fmt
+	RUST_BACKTRACE=1 \
+		cargo test \
+			$(TEST) \
+			$(CARGO_BUILD_ARGS) -- \
+			--nocapture
+
+test-st: fmt
+	cargo test $(TEST) $(CARGO_BUILD_ARGS) -- --nocapture --test-threads 1
+
+lint:
+	cargo clippy $(CARGO_BUILD_ARGS) -- \
+		-A clippy::comparison_chain \
+		-A clippy::module_inception \
+		-A clippy::redundant_closure \
+		-A clippy::redundant_pattern_matching \
+		-A clippy::search_is_some
+
+clean:
+	rm -rf target/
+	cargo clean
 
 target/windows/stamp-cli.exe:
 	@mkdir -p $(@D)
@@ -35,29 +70,4 @@ target/osx/stamp-cli:
 
 osx: target/osx/stamp-cli
 windows: target/windows/stamp-cli.exe
-
-doc:
-	cargo doc
-
-test-release: override CARGO_BUILD_ARGS += --release
-test-release:
-	cargo test $(TEST) $(CARGO_BUILD_ARGS) -- --nocapture
-
-test:
-	cargo test $(TEST) $(CARGO_BUILD_ARGS) -- --nocapture
-
-test-panic: override FEATURES += panic-on-error
-test-panic:
-	RUST_BACKTRACE=1 \
-		cargo test \
-			$(TEST) \
-			$(CARGO_BUILD_ARGS) -- \
-			--nocapture
-
-test-st:
-	cargo test $(TEST) $(CARGO_BUILD_ARGS) -- --nocapture --test-threads 1
-
-clean:
-	rm -rf target/
-	cargo clean
 
