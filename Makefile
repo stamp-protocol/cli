@@ -2,6 +2,7 @@
 
 # non-versioned include
 VARS ?= vars.mk
+FMT ?= 1
 -include $(VARS)
 
 override CARGO_BUILD_ARGS += --features "$(FEATURES)" --color=always
@@ -15,7 +16,7 @@ build: fmt
 	cargo build $(CARGO_BUILD_ARGS)
 
 fmt:
-	cargo fmt
+	if [ "$(FMT)" == "1" ]; then cargo fmt; fi
 
 release: override CARGO_BUILD_ARGS += --release
 release: build

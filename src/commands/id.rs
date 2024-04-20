@@ -9,6 +9,7 @@ use stamp_core::{
     identity::{Identity, IdentityID},
     util::{SerText, SerdeBinary, Timestamp},
 };
+use stamp_net::Multiaddr;
 use std::convert::TryFrom;
 
 pub(crate) enum FingerprintFormat {
@@ -83,6 +84,22 @@ pub(crate) fn create_vanity(
     let green = dialoguer::console::Style::new().green();
     eprintln!("\n{} {}\n", green.apply_to("Found it!"), id_str);
     Ok((tmp_master_key, transactions, now))
+}
+
+pub fn import(location: &str, join: Vec<Multiaddr>) -> Result<()> {
+    let contents = util::load_file(location)?;
+    let (transactions, existing) =
+        stamp_aux::id::import_pre(contents.as_slice()).map_err(|e| anyhow!("Error importing identity: {}", e))?;
+    let identity = util::build_identity(&transactions)?;
+    if existing.is_some() {
+        if !util::yesno_prompt("The identity you're importing already exists locally. Overwrite? [y/N]", "n")? {
+            return Ok(());
+        }
+    }
+    let id_str = id_str!(identity.id())?;
+    db::save_identity(transactions)?;
+    println!("Imported identity {}", id_str);
+    Ok(())
 }
 
 pub fn publish(id: &str, stage: bool, sign_with: Option<&str>) -> Result<String> {

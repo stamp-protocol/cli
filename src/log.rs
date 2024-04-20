@@ -3,7 +3,7 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 pub fn init() -> Result<()> {
     tracing_subscriber::registry()
-        .with(fmt::layer())
+        .with(fmt::layer().with_span_events(fmt::format::FmtSpan::CLOSE))
         .with(
             EnvFilter::try_from_default_env()
                 .or_else(|_| EnvFilter::try_new("info"))

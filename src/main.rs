@@ -16,16 +16,17 @@ use stamp_core::{
     crypto::base::rng,
     identity::{claim::RelationshipType, IdentityID},
 };
-//use stamp_net::{Multiaddr};
+use stamp_net::Multiaddr;
 use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::str::FromStr;
 
-/*
 #[derive(Debug, Clone)]
 struct MultiaddrParser {}
 impl MultiaddrParser {
-    fn new() -> Self { Self {} }
+    fn new() -> Self {
+        Self {}
+    }
 }
 
 impl TypedValueParser for MultiaddrParser {
@@ -36,7 +37,6 @@ impl TypedValueParser for MultiaddrParser {
         Self::Value::from_str(&converted).map_err(|e| clap::Error::raw(clap::error::ErrorKind::InvalidValue, e))
     }
 }
-*/
 
 /// A private syncing token. Has the channel value (always required) and an
 /// optional shared key, which can be used to decrypt the resulting messages.
@@ -188,7 +188,14 @@ fn run() -> Result<()> {
                 )
                 .subcommand(
                     Command::new("import")
-                        .about("Import an identity. It can be either one of your private identities you exported or someone else's published identity that you're importing to verify a signature they made, to stamp one of their claims, send them an encrypted message, etc.")
+                        .about("Import an identity. It can be either one of your private identities you exported or someone else's published identity. This can be a path to a local file, a web URL, or a StampNet URL like stamp://<identity-id>.")
+                        .arg(Arg::new("join")
+                            .action(ArgAction::Append)
+                            .short('j')
+                            .long("join")
+                            .value_name("/dns/join01.stampid.net/tcp/5757")
+                            .value_parser(MultiaddrParser::new())
+                            .help("This determines the network to join if requesting an identity via a stamp:// URL. Defaults to the servers set in the config or the public StampNet servers. Can be specified multiple times."))
                         .arg(Arg::new("LOCATION")
                             .required(true)
                             .index(1)
@@ -970,6 +977,16 @@ fn run() -> Result<()> {
                             .index(1)
                             .help("An identity ID, name, or email to search for when deleting."))
                 )
+                .subcommand(
+                    Command::new("set-stampnet-servers")
+                        .about("Set the default StampNet servers used for the `stamp net` or `stamp id import` commands.")
+                        .arg(Arg::new("SERVERS")
+                            .action(ArgAction::Append)
+                            .required(true)
+                            .value_name("/dns/join01.stampid.net/tcp/5757")
+                            .value_parser(MultiaddrParser::new())
+                            .help("A StampNet Multiaddr which is used by default when connecting to StampNet."))
+                )
         )
         .subcommand(
             Command::new("stage")
@@ -1044,6 +1061,62 @@ fn run() -> Result<()> {
                             .index(1)
                             .required(true)
                             .help("The transaction ID you wish to apply."))
+                )
+        )
+        .subcommand(
+            Command::new("net")
+                .about("Interact with StampNet.")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("publish")
+                        .about("Publish your identity to StampNet, allowing others to find it.")
+                        .arg(id_arg("The ID of the identity we want publish. This overrides the configured default identity."))
+                        .arg(Arg::new("input")
+                            .short('i')
+                            .long("input")
+                            .help("If your identity requires multiple signatures to create a publish transaction, then you would run `stamp id publish`, collect the needed signatures, and then use this argument to reference the final publish transaction file which is created via `stamp stage export <transactionid>`."))
+                        .arg(Arg::new("join")
+                            .action(ArgAction::Append)
+                            .short('j')
+                            .long("join")
+                            .value_name("/dns/join01.stampid.net/tcp/5757")
+                            .value_parser(MultiaddrParser::new())
+                            .help("Join an existing StampNet node. This will allow you to connect to the rest of the network. Defaults to the servers set in the config or the public StampNet servers. Can be specified multiple times."))
+                )
+                .subcommand(
+                    Command::new("get")
+                        .alias("lookup")
+                        .about("Get an identity stored in the StampNet network.")
+                        .arg(Arg::new("join")
+                            .action(ArgAction::Append)
+                            .short('j')
+                            .long("join")
+                            .value_name("/dns/join01.stampid.net/tcp/5757")
+                            .value_parser(MultiaddrParser::new())
+                            .help("Join an existing StampNet node. This will allow you to connect to the rest of the network. Defaults to the servers set in the config or the public StampNet servers. Can be specified multiple times."))
+                        .arg(Arg::new("ID")
+                            .index(1)
+                            .required(true)
+                            .help("The identity ID we want to retrieve. This must be a full identity id, not an abbreviated one."))
+                )
+                .subcommand(
+                    Command::new("node")
+                        .about("Run a node that participates in StampNet. This means it will store identities and respond to queries, as well as relay requests for other nodes behind firewalls. Running this helps the network =].")
+                        .arg(Arg::new("bind")
+                            .short('b')
+                            .long("bind")
+                            .value_name("/ip4/0.0.0.0/tcp/5757")
+                            .default_value("/ip4/0.0.0.0/tcp/5757")
+                            .value_parser(MultiaddrParser::new())
+                            .help("The address/port to listen on for StampNet."))
+                        .arg(Arg::new("join")
+                            .action(ArgAction::Append)
+                            .short('j')
+                            .long("join")
+                            .value_name("/dns/join01.stampid.net/tcp/5757")
+                            .value_parser(MultiaddrParser::new())
+                            .help("Join an existing StampNet node. This will allow you to connect to the rest of the network. Defaults to the servers set in the config or the public StampNet servers. Can be specified multiple times."))
                 )
         )
         /*
@@ -1198,26 +1271,20 @@ fn run() -> Result<()> {
                     .iter()
                     .map(|x| util::build_identity(x))
                     .collect::<Result<Vec<_>>>()?;
-                crate::commands::id::print_identities_table(&identities, verbose);
+                commands::id::print_identities_table(&identities, verbose);
             }
             Some(("import", args)) => {
                 let location = args
                     .get_one::<String>("LOCATION")
                     .map(|x| x.as_str())
                     .ok_or(anyhow!("Must specify a location value"))?;
-
-                let contents = util::load_file(location)?;
-                let (transactions, existing) =
-                    stamp_aux::id::import_pre(contents.as_slice()).map_err(|e| anyhow!("Error importing identity: {}", e))?;
-                let identity = util::build_identity(&transactions)?;
-                if existing.is_some() {
-                    if !util::yesno_prompt("The identity you're importing already exists locally. Overwrite? [y/N]", "n")? {
-                        return Ok(());
-                    }
-                }
-                let id_str = id_str!(identity.id())?;
-                db::save_identity(transactions)?;
-                println!("Imported identity {}", id_str);
+                let join = args
+                    .get_many::<Multiaddr>("join")
+                    .into_iter()
+                    .flatten()
+                    .map(|x| x.clone())
+                    .collect::<Vec<_>>();
+                commands::id::import(location, join)?;
             }
             Some(("publish", args)) => {
                 let id = id_val(args)?;
@@ -1734,6 +1801,15 @@ fn run() -> Result<()> {
                     .ok_or(anyhow!("Must specify a search value"))?;
                 commands::config::set_default(search)?;
             }
+            Some(("set-stampnet-servers", args)) => {
+                let servers = args
+                    .get_many::<Multiaddr>("SERVERS")
+                    .into_iter()
+                    .flatten()
+                    .map(|x| x.clone())
+                    .collect::<Vec<_>>();
+                commands::config::set_stampnet_servers(servers)?;
+            }
             _ => unreachable!("Unknown command"),
         },
         Some(("dag", args)) => match args.subcommand() {
@@ -1825,8 +1901,45 @@ fn run() -> Result<()> {
                 let txid = args
                     .get_one::<String>("TXID")
                     .map(|x| x.as_str())
-                    .ok_or(anyhow!("Must specify a join token"))?;
+                    .ok_or(anyhow!("Must specify a transaction ID"))?;
                 commands::stage::apply(txid)?;
+            }
+            _ => unreachable!("Unknown command"),
+        },
+        Some(("net", args)) => match args.subcommand() {
+            Some(("publish", args)) => {
+                let id = id_val(args)?;
+                let input = args.get_one::<String>("input").map(|x| x.as_str());
+                let join = args
+                    .get_many::<Multiaddr>("join")
+                    .into_iter()
+                    .flatten()
+                    .map(|x| x.clone())
+                    .collect::<Vec<_>>();
+                commands::net::publish(&id, input, join)?;
+            }
+            Some(("get", args)) => {
+                let id = args
+                    .get_one::<String>("ID")
+                    .map(|x| x.as_str())
+                    .ok_or(anyhow!("Must specify a full identity ID"))?;
+                let join = args
+                    .get_many::<Multiaddr>("join")
+                    .into_iter()
+                    .flatten()
+                    .map(|x| x.clone())
+                    .collect::<Vec<_>>();
+                commands::net::get(&id, join)?;
+            }
+            Some(("node", args)) => {
+                let bind = args.get_one::<Multiaddr>("bind").expect("Missing `bind` argument.").clone();
+                let join = args
+                    .get_many::<Multiaddr>("join")
+                    .into_iter()
+                    .flatten()
+                    .map(|x| x.clone())
+                    .collect::<Vec<_>>();
+                commands::net::node(bind, join)?;
             }
             _ => unreachable!("Unknown command"),
         },
