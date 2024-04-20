@@ -8,8 +8,18 @@ Stamp CLI changes *allowed by law*.
 
 ## v0.1.4 // TBD
 
+StampNet is born =]. The public Stamp identity storage network is taking shape. This allows storing
+and retrieving *valid* identities in a p2p DHT. Currently the network has no validation for storing,
+so anybody can come in off the street and publish and identity. Might need some form of rate limiting
+eventually, but for now we can pretend it's gay space communism and kick that can down the road.
+
 ### Features
 
+- StampNet v0.0.0.0.0.0.0.1!!!
+  - Run a public DHT node (`stamp net node`)
+  - Publish your identity (`stamp net publish`)
+  - Get an identity (`stamp net get`)
+  - Update default StampNet servers (`stamp config set-stampnet-servers`)
 - Changing signature verification messages to be more clear.
 - Rename "Identity signature" to "Policy signature." I believe it's less ambiguous.
 
