@@ -1,9 +1,10 @@
 use crate::{commands::id::try_load_single_identity, config, db, util};
 use anyhow::{anyhow, Result};
+use indicatif::{ProgressBar, ProgressStyle};
 use stamp_aux::id::sign_with_optimal_key;
 use stamp_core::{
-    dag::Transaction,
-    identity::IdentityID,
+    dag::{Transaction, Transactions},
+    identity::{Identity, IdentityID},
     util::{base64_decode, SerText, SerdeBinary, Timestamp},
 };
 use stamp_net::{
@@ -71,14 +72,22 @@ pub async fn publish(id: &str, publish_transaction_file: Option<&str>, join: Vec
             .map_err(|e| anyhow!("Error creating publish transaction: {:?}", e))?;
         sign_with_optimal_key(&identity, &master_key, transaction).map_err(|e| anyhow!("Error signing transaction: {:?}", e))?
     };
-    signed_publish_transaction.clone().validate_publish_transaction()?;
+    let (_, identity) = signed_publish_transaction.clone().validate_publish_transaction()?;
 
     let join = get_stampnet_joinlist(join)?;
     let join_len = join.len();
     let bind: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse()?;
     let peer_key = random_peer_key();
     let peer_id = stamp_net::PeerId::from(peer_key.public());
-    let (agent, events) = Agent::new(peer_key, agent::memory_store(&peer_id), RelayMode::Client, DHTMode::Client).unwrap();
+    let (agent, events) = Agent::new(peer_key, agent::memory_store(&peer_id), RelayMode::Client, DHTMode::Client)?;
+    let spinner = ProgressBar::new_spinner();
+    spinner.enable_steady_tick(250);
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&["*     ", " *    ", "  *   ", "   *  ", "    * ", "     *", "     *"])
+            .template("[{spinner:.green}] {msg}"),
+    );
+    spinner.set_message("Connecting to StampNet...");
     let agent = Arc::new(agent);
     let mut task_set = task::JoinSet::new();
     let (tx_ident, mut rx_ident) = mpsc::channel::<()>(1);
@@ -90,24 +99,36 @@ pub async fn publish(id: &str, publish_transaction_file: Option<&str>, join: Vec
         None => warn!("ident sender dropped"),
     }
     agent.dht_bootstrap().await?;
+    spinner.set_message("Joined StampNet. Publishing identity...");
     let quorum = std::num::NonZeroUsize::new(std::cmp::max(join_len, 1)).ok_or(anyhow!("bad non-zero usize"))?;
     agent.publish_identity(signed_publish_transaction, Quorum::N(quorum)).await?;
+    spinner.set_message("Identity published!");
     agent.quit().await?;
+    spinner.finish();
     while let Some(res) = task_set.join_next().await {
         res??;
     }
+    let green = dialoguer::console::Style::new().green();
+    println!("{} stamp://{}", green.apply_to("Published identity"), identity.id());
     Ok(())
 }
 
-#[tokio::main(flavor = "current_thread")]
-pub async fn get(id: &str, join: Vec<Multiaddr>) -> Result<()> {
+pub async fn get_identity(id: &str, join: Vec<Multiaddr>) -> Result<(Transactions, Identity)> {
     let identity_id = IdentityID::try_from(id)?;
     let join = get_stampnet_joinlist(join)?;
     let join_len = join.len();
     let bind: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse()?;
     let peer_key = random_peer_key();
     let peer_id = stamp_net::PeerId::from(peer_key.public());
-    let (agent, events) = Agent::new(peer_key, agent::memory_store(&peer_id), RelayMode::Client, DHTMode::Client).unwrap();
+    let (agent, events) = Agent::new(peer_key, agent::memory_store(&peer_id), RelayMode::Client, DHTMode::Client)?;
+    let spinner = ProgressBar::new_spinner();
+    spinner.enable_steady_tick(250);
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&["*     ", " *    ", "  *   ", "   *  ", "    * ", "     *", "     *"])
+            .template("[{spinner:.green}] {msg}"),
+    );
+    spinner.set_message("Connecting to StampNet...");
     let agent = Arc::new(agent);
     let mut task_set = task::JoinSet::new();
     let (tx_ident, mut rx_ident) = mpsc::channel::<()>(1);
@@ -119,14 +140,26 @@ pub async fn get(id: &str, join: Vec<Multiaddr>) -> Result<()> {
         None => warn!("ident sender dropped"),
     }
     agent.dht_bootstrap().await?;
-    let lookup_res = agent.lookup_identity(identity_id.clone()).await?;
+    spinner.set_message("Joined StampNet. Searching for identity...");
+    let lookup_res = agent.lookup_identity(identity_id.clone()).await;
+    spinner.set_message("Search completed.");
     agent.quit().await?;
+    spinner.finish();
     while let Some(res) = task_set.join_next().await {
         res??;
     }
 
-    let publish_transaction = lookup_res.ok_or_else(|| anyhow!("Identity {} not found", identity_id))?;
-    let (transactions, identity) = publish_transaction.validate_publish_transaction()?;
+    let publish_transaction = match lookup_res {
+        Ok(Some(trans)) => trans,
+        Ok(None) => Err(anyhow!("Identity {} not found", identity_id))?,
+        Err(e) => Err(anyhow!("Problem looking up identity {}: {}", identity_id, e))?,
+    };
+    Ok(publish_transaction.validate_publish_transaction()?)
+}
+
+#[tokio::main(flavor = "current_thread")]
+pub async fn get(id: &str, join: Vec<Multiaddr>) -> Result<()> {
+    let (transactions, identity) = get_identity(id, join).await?;
     let exists = db::load_identity(identity.id())?;
     let identity = util::build_identity(&transactions)?;
     if exists.is_some() {
@@ -135,7 +168,8 @@ pub async fn get(id: &str, join: Vec<Multiaddr>) -> Result<()> {
         }
     }
     db::save_identity(transactions)?;
-    println!("Imported identity {}", identity.id());
+    let green = dialoguer::console::Style::new().green();
+    println!("{} {}", green.apply_to("Imported identity"), identity.id());
     Ok(())
 }
 
@@ -144,7 +178,7 @@ pub async fn node(bind: Multiaddr, join: Vec<Multiaddr>) -> Result<()> {
     let join = get_stampnet_joinlist(join)?;
     let peer_key = random_peer_key();
     let peer_id = stamp_net::PeerId::from(peer_key.public());
-    let (agent, events) = Agent::new(peer_key, agent::memory_store(&peer_id), RelayMode::Server, DHTMode::Server).unwrap();
+    let (agent, events) = Agent::new(peer_key, agent::memory_store(&peer_id), RelayMode::Server, DHTMode::Server)?;
     let agent = Arc::new(agent);
     let mut task_set = task::JoinSet::new();
     let (tx_ident, mut rx_ident) = mpsc::channel::<()>(1);

@@ -4073,7 +4073,7 @@ dependencies = [
 
 [[package]]
 name = "stamp-aux"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "chrono",
@@ -4097,7 +4097,7 @@ dependencies = [
 
 [[package]]
 name = "stamp-cli"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "atty",
@@ -4119,11 +4119,12 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
 name = "stamp-core"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "argon2",
  "base64 0.21.5",
@@ -4157,7 +4158,6 @@ dependencies = [
  "getset",
  "libp2p",
  "rasn",
- "rusqlite",
  "stamp-core",
  "thiserror",
  "tokio",

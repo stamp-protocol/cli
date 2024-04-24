@@ -87,7 +87,7 @@ pub(crate) fn create_vanity(
 }
 
 pub fn import(location: &str, join: Vec<Multiaddr>) -> Result<()> {
-    let contents = util::load_file(location)?;
+    let contents = util::load_file_extended(location, join)?;
     let (transactions, existing) =
         stamp_aux::id::import_pre(contents.as_slice()).map_err(|e| anyhow!("Error importing identity: {}", e))?;
     let identity = util::build_identity(&transactions)?;
@@ -98,7 +98,8 @@ pub fn import(location: &str, join: Vec<Multiaddr>) -> Result<()> {
     }
     let id_str = id_str!(identity.id())?;
     db::save_identity(transactions)?;
-    println!("Imported identity {}", id_str);
+    let green = dialoguer::console::Style::new().green();
+    println!("{} {}", green.apply_to("Imported identity"), id_str);
     Ok(())
 }
 

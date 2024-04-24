@@ -20,6 +20,12 @@ eventually, but for now we can pretend it's gay space communism and kick that ca
   - Publish your identity (`stamp net publish`)
   - Get an identity (`stamp net get`)
   - Update default StampNet servers (`stamp config set-stampnet-servers`)
+- `stamp id import` now accepts three input types:
+  - A local path: `stamp id import /path/to/identity`. This was how the original command worked and is unchanged.
+  - A url: `stamp id import https://martymalt.com/blumps.stamp`. You can now import identities direct from the
+    world wide web. You can also use `file://` urls for local files.
+  - A Stamp url: `stamp id import stamp://s0f__TtNxiUrNJ8yi14vVQteecP7xQYQzcohhPqOdt8A`. This is pretty much the
+    exact same as `stamp net get <id>`.
 - Changing signature verification messages to be more clear.
 - Rename "Identity signature" to "Policy signature." I believe it's less ambiguous.
 

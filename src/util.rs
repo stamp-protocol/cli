@@ -1,14 +1,18 @@
+use crate::commands;
 use anyhow::{anyhow, Result};
 use stamp_aux::id::sign_with_optimal_key;
 use stamp_core::{
     crypto::base::{SecretKey, KDF_MEM_INTERACTIVE, KDF_MEM_MODERATE, KDF_OPS_INTERACTIVE, KDF_OPS_MODERATE},
     dag::{Transaction, Transactions},
     identity::Identity,
+    util::SerdeBinary,
 };
+use stamp_net::Multiaddr;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use textwrap;
 use tracing::warn;
+use url::Url;
 
 pub(crate) fn term_maxwidth() -> usize {
     120
@@ -185,6 +189,28 @@ pub fn load_file(filename: &str) -> Result<Vec<u8>> {
         .read_to_end(&mut contents)
         .map_err(|e| anyhow!("Problem reading file: {}: {:?}", filename, e))?;
     Ok(contents)
+}
+
+#[tokio::main(flavor = "current_thread")]
+pub async fn load_file_extended(filename: &str, join: Vec<Multiaddr>) -> Result<Vec<u8>> {
+    match Url::parse(filename) {
+        Ok(url) => {
+            if url.scheme() == "file" {
+                load_file(url.path())
+            } else if url.scheme() == "http" || url.scheme() == "https" {
+                Ok(Vec::from(stamp_aux::util::http_get(url.as_str())?.as_bytes()))
+            } else if url.scheme() == "stamp" {
+                let host = url.host_str().ok_or(anyhow!("Invalid stamp:// URL given"))?;
+                let (transactions, _) = commands::net::get_identity(host, join).await?;
+                let ser = transactions.serialize_binary()?;
+                Ok(ser)
+            } else {
+                Err(anyhow!("Unknown URL/path format given: {}", filename))?
+            }
+        }
+        // ok try it as a local path, I GUESS
+        Err(_) => load_file(filename),
+    }
 }
 
 pub fn text_wrap(text: &str) -> String {
