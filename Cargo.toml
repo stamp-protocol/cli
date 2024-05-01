@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 anyhow = "1.0.70"
 atty = "0.2"
+chrono = { version = "0.4", features = ["clock", "serde"] }
 clap = { version = "4.1.8", features = ["derive", "wrap_help"] }
 dialoguer = "0.10.0"
 indicatif = "0.15.0"

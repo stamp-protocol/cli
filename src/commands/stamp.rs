@@ -71,7 +71,7 @@ pub fn new(our_identity_id: &str, claim_id: &str, stage: bool, sign_with: Option
         "low" => Confidence::Low,
         "medium" => Confidence::Medium,
         "high" => Confidence::High,
-        "extreme" => Confidence::Extreme,
+        "ultimate" => Confidence::Ultimate,
         _ => Err(anyhow!("Invalid confidence value: {}", confidence_val))?,
     };
     let expires: Option<Timestamp> = if util::yesno_prompt("Would you like your stamp to expire on a certain date? [y/N]", "n")? {
@@ -303,7 +303,7 @@ pub fn print_stamps_table(stamps: &Vec<&Stamp>, verbose: bool, show_revoked: boo
             Confidence::Low => "low",
             Confidence::Medium => "medium",
             Confidence::High => "high",
-            Confidence::Extreme => "extreme",
+            Confidence::Ultimate => "ultimate",
         };
         let mut cols = Vec::with_capacity(7);
         cols.push(prettytable::Cell::new(if verbose { &id_full } else { &id_short }));

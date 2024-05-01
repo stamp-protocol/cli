@@ -4101,6 +4101,7 @@ version = "0.1.4"
 dependencies = [
  "anyhow",
  "atty",
+ "chrono",
  "clap",
  "dialoguer",
  "indicatif",
