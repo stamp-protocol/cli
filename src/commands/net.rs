@@ -1,5 +1,6 @@
 use crate::{commands::id::try_load_single_identity, config, db, util};
 use anyhow::{anyhow, Result};
+use chrono::{Days, Local};
 use indicatif::{ProgressBar, ProgressStyle};
 use stamp_aux::id::sign_with_optimal_key;
 use stamp_core::{
@@ -102,7 +103,7 @@ pub async fn publish(id: &str, publish_transaction_file: Option<&str>, join: Vec
     spinner.set_message("Joined StampNet. Publishing identity...");
     let quorum = std::num::NonZeroUsize::new(std::cmp::max(join_len, 1)).ok_or(anyhow!("bad non-zero usize"))?;
     agent.publish_identity(signed_publish_transaction, Quorum::N(quorum)).await?;
-    spinner.set_message("Identity published!");
+    spinner.set_message("Completed");
     agent.quit().await?;
     spinner.finish();
     while let Some(res) = task_set.join_next().await {
@@ -110,6 +111,14 @@ pub async fn publish(id: &str, publish_transaction_file: Option<&str>, join: Vec
     }
     let green = dialoguer::console::Style::new().green();
     println!("{} stamp://{}", green.apply_to("Published identity"), identity.id());
+    println!(
+        "\n{}",
+        util::text_wrap("Your identity will expire in 365 days and must be republished before then to remain active in the network.")
+    );
+    println!(
+        "Set your calendar for {}!",
+        green.apply_to((Local::now().date_naive() + Days::new(365)).format("%b %e %Y"))
+    );
     Ok(())
 }
 
