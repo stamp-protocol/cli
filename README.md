@@ -15,6 +15,7 @@ cd stamp
 git clone https://github.com/stamp-protocol/core.git
 git clone https://github.com/stamp-protocol/aux.git
 git clone https://github.com/stamp-protocol/cli.git
+git clone https://github.com/stamp-protocol/net.git
 cd cli
 make
 ln -s ./target/debug/cli stamp
